@@ -1,0 +1,2056 @@
+/*package service
+
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/volatiletech/null/v8"
+	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/db"
+	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/log"
+	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/adapter"
+	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/model"
+	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/repo"
+	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/service"
+	"go.uber.org/zap"
+	"strconv"
+	"strings"
+	"time"
+)
+
+var ErrUserNotFound = errors.New("user not found")
+
+type AllocateResult struct {
+	Status        string
+	BookingID     int32
+	GroupID       int32
+	ItemID        int32
+	AllocatedRoom ProductObject
+	Reason        string
+}
+
+type History struct {
+	User   Agent
+	Action string
+	Before Reservation
+	After  Reservation
+}
+
+type ActionAbstractUpdate struct{}
+
+type allocatorService struct {
+	ctx                   context.Context
+	reservation           Reservation
+	logger                log.Logger
+	db                    db.DB
+	bookingRepoFactory    repo.BookingRepoFactory
+	bookingAdapterFactory adapter.BookingAdapterFactory
+}
+
+type Money struct {
+	Amount   float64
+	Currency string
+}
+
+type ReservationStatus string
+
+type ReservationPaymentOption string
+
+type ReservationGroup struct {
+	Item           BookingItems
+	ID             int32
+	BookingID      int32
+	PaxNationality string
+	StartDate      time.Time
+	EndDate        time.Time
+	ParentID       int64
+	Items          []BookingItems
+}
+
+type CurrencyRate struct {
+	BookingID int64
+	Source    string
+	Target    string
+	Rate      float64
+	Date      time.Time
+	Final     bool
+}
+
+type Reservation struct {
+	ID                  int32
+	Creator             Agent
+	Price               Money
+	CreationDate        time.Time
+	Status              ReservationStatus
+	ProviderReference   string
+	Channel             string
+	Remark              string
+	Client              string
+	Manual              bool
+	PaymentOption       ReservationPaymentOption
+	Groups              []ReservationGroup
+	CancellationDate    *time.Time
+	StartDate           *time.Time
+	EndDate             *time.Time
+	Segment             string
+	Source              string
+	Logs                interface{} // Replace with actual type
+	CurrencyRates       []CurrencyRate
+	Foct                bool
+	IsCityTaxToProvider bool
+	MetaGroupID         int64
+	Customer            *Client
+}
+
+func (s *allocatorService) getAgent(id int32) (*Agent, error) {
+	row := s.db.QueryRow("SELECT id, name, AccountID FROM agents WHERE id = ?", id)
+
+	agent := &Agent{}
+	err := row.Scan(&agent.ID, &agent.Name, &agent.AccountID)
+	if err != nil {
+		return nil, err
+	}
+
+	return agent, nil
+}
+
+func (s *allocatorService) getCurrencyRates(bookingID int32) ([]CurrencyRate, error) {
+	rows, err := s.db.Query("SELECT BookingID, Source, Target, Rate, Date, Final FROM booking_currency_rates WHERE BookingID = ?", bookingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rates []CurrencyRate
+
+	for rows.Next() {
+		var rate CurrencyRate
+
+		err := rows.Scan(&rate.BookingID, &rate.Source, &rate.Target, &rate.Rate, &rate.Date, &rate.Final)
+		if err != nil {
+			return nil, err
+		}
+
+		rates = append(rates, rate)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		return nil, err
+	}
+
+	return rates, nil
+}
+
+func (s *allocatorService) getItemsForGroup(groupID int32) ([]BookingItems, error) {
+	rows, err := s.db.Query("SELECT * FROM booking_items WHERE GroupID = ?", groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]BookingItems, 0)
+	for rows.Next() {
+		item := BookingItems{}
+		var productID int32
+		err = rows.Scan(&item.ID, &item.VenueID, &productID) // and so on for all fields in Item
+		if err != nil {
+			return nil, err
+		}
+
+		// get Product for this item
+		product, err := s.getProduct(productID)
+		if err != nil {
+			return nil, err
+		}
+		item.Product = product
+
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func (s *allocatorService) getGroups(bookingID int32) ([]ReservationGroup, error) {
+	rows, err := s.db.Query("SELECT * FROM booking_groups WHERE BookingID = ?", bookingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	groups := make([]ReservationGroup, 0)
+	for rows.Next() {
+		group := ReservationGroup{}
+		err = rows.Scan(&group.ID, &group.BookingID, &group.PaxNationality, &group.StartDate, &group.EndDate, &group.ParentID) // and so on for all fields in BookingGroup
+		if err != nil {
+			return nil, err
+		}
+
+		// get Items for this group
+		items, err := s.getItemsForGroup(group.ID)
+		if err != nil {
+			return nil, err
+		}
+		group.Items = items
+
+		groups = append(groups, group)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return groups, nil
+}
+
+func (s *allocatorService) getProduct(productID int32) (Product, error) {
+	row := s.db.QueryRow("SELECT * FROM products WHERE ID = ?", productID)
+
+	product := Product{}
+	err := row.Scan(&product.ID, &product.AffectedBy, &product.AffectsAvailability, &product.AffectsRate, &product.AffectsRateAmount, &product.AffectsRateCalc, &product.AffectsRateSign, &product.AffectsRateTypeAgentID, &product.AttachedTo, &product.BaseCurrencyBestPrice, &product.ProductType, &product.Status) // and so on for all fields in Product
+	if err != nil {
+		return Product{}, err
+	}
+
+	return product, nil
+}
+
+func (s *allocatorService) getReservations(bookingIDs []int32) ([]Reservation, error) {
+
+	var reservationList []Reservation
+
+	// Dereference the pointer to get the actual []int32 slice
+	ids := bookingIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT ID,ProviderReference,Channel,Client,Manual,PaymentOption,CancellationDate,StartDate,EndDate,Segment,Source,Foct,MetaGroupID FROM bookings WHERE ID IN  (%s) GROUP BY companies.ID  ", strings.Join(placeholders, ","))
+
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	rows, err := s.db.Query(query, interfaceIDs...)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return []Reservation{}, ErrUserNotFound
+		}
+		return []Reservation{}, err
+	}
+	defer rows.Close()
+
+	// Iterate over the result set and populate the finalCompanyList
+	for rows.Next() {
+		var reservation Reservation
+		err := rows.Scan(
+			&reservation.ID,
+			&reservation.ProviderReference,
+			&reservation.Channel,
+			&reservation.Client,
+			&reservation.Manual,
+			&reservation.PaymentOption,
+			&reservation.CancellationDate,
+			&reservation.StartDate,
+			&reservation.EndDate,
+			&reservation.Segment,
+			&reservation.Source,
+			&reservation.Foct,
+			&reservation.MetaGroupID,
+		)
+		if err != nil {
+			return []Reservation{}, err
+		}
+
+		agent, err := s.getAgent(reservation.ID) // Replace with correct Agent ID
+		if err != nil {
+			return nil, err
+		}
+		reservation.Creator = *agent
+
+		// get CurrencyRates
+		rates, err := s.getCurrencyRates(reservation.ID)
+		if err != nil {
+			return nil, err
+		}
+		reservation.CurrencyRates = rates
+
+		// get Groups
+		groups, err := s.getGroups(reservation.ID)
+		if err != nil {
+			return nil, err
+		}
+		reservation.Groups = groups
+
+		reservationList = append(reservationList, reservation)
+	}
+
+	// get Agent
+
+	return reservationList, nil
+}
+
+func (s *allocatorService) getReservation(bookingID int32) (*Reservation, error) {
+	row := s.db.QueryRow(`
+		SELECT
+			ID,
+			ProviderReference,
+			Channel,
+			Client,
+			Manual,
+			PaymentOption,
+			CancellationDate,
+			StartDate,
+			EndDate,
+			Segment,
+			Source,
+			Foct,
+			MetaGroupID
+		FROM
+			bookings
+		WHERE
+			ID = ?`,
+		bookingID,
+	)
+
+	reservation := &Reservation{}
+	err := row.Scan(
+		&reservation.ID,
+		&reservation.ProviderReference,
+		&reservation.Channel,
+		&reservation.Client,
+		&reservation.Manual,
+		&reservation.PaymentOption,
+		&reservation.CancellationDate,
+		&reservation.StartDate,
+		&reservation.EndDate,
+		&reservation.Segment,
+		&reservation.Source,
+		&reservation.Foct,
+		&reservation.MetaGroupID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// get Agent
+	agent, err := s.getAgent(reservation.ID) // Replace with correct Agent ID
+	if err != nil {
+		return nil, err
+	}
+	reservation.Creator = *agent
+
+	// get CurrencyRates
+	rates, err := s.getCurrencyRates(bookingID)
+	if err != nil {
+		return nil, err
+	}
+	reservation.CurrencyRates = rates
+
+	// get Groups
+	groups, err := s.getGroups(bookingID)
+	if err != nil {
+		return nil, err
+	}
+	reservation.Groups = groups
+
+	return reservation, nil
+}
+
+type SegmentReservation struct {
+	// Define fields for the SegmentReservation struct here
+}
+
+type Service struct {
+	// Define fields for the Service struct here
+}
+
+type VenueAutoAllocate struct {
+	AutoAllocate bool `db:"AutoAllocate"`
+}
+
+type Client struct {
+	ID             null.Int32  `db:"ID"`
+	AccountID      null.Int32  `db:"AccountID"`
+	Email          null.String `db:"Email"`
+	Phone          null.String `db:"Phone"`
+	Title          null.String `db:"Title"`
+	Gender         null.String `db:"Gender"`
+	Nationality    null.String `db:"Nationality"`
+	LanguageID     null.Int32  `db:"LanguageID"`
+	Identification null.String `db:"Identification"`
+	LastName       null.String `db:"LastName"`
+	BirthDate      []uint8     `db:"BirthDate"`
+	Address        null.String `db:"Address"`
+	AdditionalInfo null.String `db:"AdditionalInfo"`
+	AgentID        null.Int32  `db:"AgentID"`
+	CreatedAt      []uint8     `db:"CreatedAt"`
+	Status         null.String `db:"Status"`
+}
+
+type ReservationCommissionType struct {
+	// Define fields for the ReservationCommissionType struct here
+}
+
+type Time struct {
+	// Define fields for the Time struct here
+}
+
+func NewAllocatorService(
+	ctx context.Context,
+	logger log.Logger,
+	db db.DB,
+	bookingRepoFactory repo.BookingRepoFactory,
+	bookingAdapterFactory adapter.BookingAdapterFactory,
+) service.AllocatorService {
+	return &allocatorService{
+		logger:                logger.WithComponent(ctx, "ConfiguratorService"),
+		db:                    db,
+		bookingRepoFactory:    bookingRepoFactory,
+		bookingAdapterFactory: bookingAdapterFactory,
+	}
+}
+
+func (s *allocatorService) getVenueAutoAllocate(ctx context.Context, reservationID *int32) (bool, error) {
+
+	var venueAutoAllocate VenueAutoAllocate
+
+	query := `SELECT venues.AutoAllocate
+FROM bookings
+JOIN booking_groups ON bookings.ID = booking_groups.BookingID
+JOIN booking_items ON booking_groups.ID = booking_items.ID
+JOIN venues ON booking_items.VenueID = venues.ID
+WHERE bookings.ID = ?;`
+	// Use QueryRow to fetch a single row result directly
+	err := s.db.QueryRow(query, reservationID).Scan(
+		&venueAutoAllocate.AutoAllocate,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return false, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return false, err
+	}
+
+	return true, err
+
+}
+
+func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int32, productEntity Product, startDate, endDate time.Time) ([]ProductObject, error) {
+	// Prepare the criteria for the ProductObject query
+	var productIDs []int32
+	productIDs = append(productIDs, productEntity.ID)
+
+	productObjectCriteria := ProductObjectCriteria{
+		VenueID:     venueID,
+		ProductIDs:  productIDs,
+		PeriodStart: startDate,
+		PeriodEnd:   endDate,
+		PeriodType:  "allocatable",
+	}
+
+	// Fetch the ProductObjects from the database using the criteria
+	productObjects, err := s.fetchAllocatableProductObjects(ctx, productObjectCriteria)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter out the excluded rooms, if any
+	var allocatableRooms []ProductObject
+	for _, room := range productObjects {
+		allocatableRooms = append(allocatableRooms, room)
+	}
+
+	return allocatableRooms, nil
+}
+
+func (s *allocatorService) getAllocatedObject(itemID int32) (bool, error) {
+	var status string
+	query := "SELECT status FROM booking_allocations WHERE BookingProductID = ? "
+
+	err := s.db.QueryRow(query, itemID).Scan(&status)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil // Return empty status if no row found
+		}
+		return false, err
+	}
+
+	return true, nil
+}
+func (s *allocatorService) getAllocatedObjectStatus(bookingProductID int) (string, error) {
+	var status string
+	query := "SELECT Status FROM booking_allocations WHERE BookingProductID = ? LIMIT 1"
+
+	err := s.db.QueryRow(query, bookingProductID).Scan(&status)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil // Return empty status if no row found
+		}
+		return "", err
+	}
+
+	return status, nil
+}
+
+func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int32, userID *int32) ([]byte, error) {
+	logger := s.logger.WithMethod(ctx, "AllocateAll")
+	//needToAmend := false
+	var results []AllocateResult
+
+	if reservationIDs == nil || len(reservationIDs) == 0 {
+		return nil, errors.New("Invalid parameter reservationIDs")
+	}
+
+	user, err := s.getUserFromDatabase(userID)
+	if err != nil {
+		logger.Error("failed to get user from database", zap.Error(err))
+		return nil, err
+	}
+
+	userJSON, err := json.Marshal(user)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(userJSON))
+
+	reservations, err := s.getReservations(reservationIDs)
+
+	reservationsJSON, err := json.Marshal(reservations)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+	fmt.Println(string(reservationsJSON))
+
+	//var results []AllocateResult
+	for _, reservation := range reservations {
+		needToAmend := false
+		//bookingBeforeAmend := reservation
+
+		tx, err := s.db.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback(ctx)
+
+		for _, group := range reservation.Groups {
+			for _, item := range group.Items {
+				isAllocatedObject, err := s.getAllocatedObject(item.ID)
+				if err != nil {
+					return nil, err
+				}
+				if item.Product.ProductType == "ROOM" &&
+					item.Status == "CONFIRMED" &&
+					!isAllocatedObject {
+
+					roomsByProduct, err := s.getAllocatableRooms(ctx, item.VenueID, item.Product, group.StartDate, group.EndDate)
+					if err != nil {
+						return nil, err
+					}
+
+					if len(roomsByProduct) == 0 {
+						results = append(results, AllocateResult{
+							Status:    "unallocated",
+							BookingID: reservation.ID,
+							GroupID:   group.ID,
+							ItemID:    item.ID,
+							Reason:    "No available rooms for this date period!",
+						})
+						continue
+					}
+
+					room := roomsByProduct[0]
+					roomsByProduct = roomsByProduct[1:]
+					needToAmend, err = s.allocateRoom(item.Product.ID)
+					if err != nil {
+						return nil, err
+					}
+
+					results = append(results, AllocateResult{
+						Status:        "allocated",
+						BookingID:     reservation.ID,
+						GroupID:       group.ID,
+						ItemID:        item.ID,
+						AllocatedRoom: room,
+					})
+
+										history := History{
+											User:   user,
+											Action: "update",
+											Before: bookingBeforeAmend, // клон объекта reservation
+											After:  reservation,
+										}
+										s.historySaver.Save(history)
+				}
+			}
+		}
+
+		if needToAmend {
+			if err := tx.Commit(); err != nil {
+				logger.Error("failed to commit transaction", zap.Error(err))
+				return nil, err
+			}
+		}
+	}
+
+	fmt.Println("Json=>")
+	resultsJSON, err := json.Marshal(results)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	fmt.Println(string(resultsJSON))
+
+	return resultsJSON, nil
+}
+
+type Company struct {
+	ID               int32       `db:"id"`
+	Name             null.String `db:"Name"`
+	ShortName        null.String `db:"ShortName"`
+	CountryCode      null.String `db:"CountryCode"`
+	State            null.String `db:"State"`
+	City             null.String `db:"City"`
+	Address          null.String `db:"Address"`
+	Address2         null.String `db:"Address2"`
+	Zip              null.String `db:"Zip"`
+	CompanyNumber    null.String `db:"CompanyNumber"`
+	CompanyVatNumber null.String `db:"CompanyVatNumber"`
+	Iban             null.String `db:"Iban"`
+	Swift            null.String `db:"Swift"`
+	OnAccount        null.Bool   `db:"OnAccount"`
+	Preferences      null.String `db:"Preferences"`
+	Comments         null.String `db:"Comments"`
+	ContactPerson    null.String `db:"ContactPerson"`
+	Status           null.String `db:"Status"`
+}
+
+type Comment struct {
+	ID          int32       `db:"id"`
+	EntityType  null.String `db:"entityType"`
+	EntityID    null.Int32  `db:"entityID"`
+	AgentID     null.Int32  `db:"agentID"`
+	CommentType null.String `db:"commentType"`
+	Comment     null.String `db:"comment"`
+	PostedAt    []uint8     `db:"postedAt"`
+	UpdatedAt   []uint8     `db:"updatedAt"`
+}
+
+type Account struct {
+	ID            null.Int32  `db:"BookingID"`
+	Name          null.String `db:"Name"`
+	ContactPerson null.String `db:"ContactPerson"`
+	ContactEmail  null.String `db:"ContactEmail"`
+	CountryCode   null.String `db:"CountryCode"`
+	PhoneNumber   null.String `db:"PhoneNumber"`
+	Active        null.Bool   `db:"Active"`
+	ReportBug     null.Bool   `db:"ReportBug"`
+	Type          null.String `db:"Type"`
+	TwoFactorAuth null.Bool   `db:"TwoFactorAuth"`
+	AppVersion    null.String `db:"AppVersion"`
+}
+
+type CasbinRuleAgents struct {
+	ID                 null.Int32  `db:"ID"`
+	AccountID          null.Int32  `db:"AccountID"`
+	Name               null.String `db:"Name"`
+	Password           null.String `db:"Password"`
+	AccessLevel        null.String `db:"AccessLevel"`
+	Active             null.Bool   `db:"Active"`
+	Locale             null.String `db:"Locale"`
+	DefaultVenueID     null.Int32  `db:"DefaultVenueID"`
+	FirstTimeLogin     null.Bool   `db:"FirstTimeLogin"`
+	AllowedVenues      null.String `db:"AllowedVenues"`
+	Email              null.String `db:"Email"`
+	SendEmail          null.String `db:"SendEmail"`
+	EmailNotifications null.String `db:"EmailNotifications"`
+	FavoritePages      null.String `db:"FavoritePages"`
+	Avatar             null.String `db:"Avatar"`
+	Role               null.String `db:"Role"`
+}
+
+type BookingRemarks struct {
+	BookingID null.Int32 `db:"BookingID"`
+	Remark    null.Int32 `db:"Remark"`
+}
+
+type BookingChangesLog struct {
+	ID            null.Int32  `db:"id"`
+	ReservationID null.Int32  `db:"reservation_id"`
+	Changes       null.String `db:"changes"`
+	Agent         null.String `db:"agent"`
+	Time          null.String `db:"time"`
+}
+
+type BookingCurrencyRates struct {
+	BookingID null.Int32   `db:"BookingID"`
+	Source    null.String  `db:"Source"`
+	Target    null.String  `db:"Target"`
+	Rate      null.Float32 `db:"Rate"`
+	Date      []uint8      `db:"Date"`
+	Final     null.Bool    `db:"Final"`
+}
+
+type BookingPax struct {
+	GroupID  null.Int32 `db:"GroupID"`
+	ClientID null.Int32 `db:"ClientID"`
+}
+
+type BookingGroupRatePlan struct {
+	RatePlanID int32       `db:"RatePlanID"`
+	GroupId    null.Int32  `db:"GroupId"`
+	JsonData   null.String `db:"JsonData"`
+}
+
+type BookingItemRateDetails struct {
+	ItemID          int32        `db:"id"`
+	Date            []uint8      `db:"Date"`
+	Amount          null.Float32 `db:"Amount"`
+	AmountBeforeTax null.Float32 `db:"AmountBeforeTax"`
+	Currency        null.String  `db:"Currency"`
+	OriginalAmount  null.Float32 `db:"OriginalAmount"`
+}
+
+type ProductAffected struct {
+	ID                int32       `db:"id"`
+	ProductID         null.String `db:"product_id"`
+	ClientID          null.Int32  `db:"client_id"`
+	UsedAt            []uint8     `db:"used_at"`
+	IsUsed            null.Int32  `db:"is_used"`
+	GroupID           null.Int32  `db:"group_id"`
+	UseAt             []uint8     `db:"use_at"`
+	ReservationItemID null.Int32  `db:"reservation_item_id"`
+}
+
+type BookingItemCancellationPolicies struct {
+	ItemID            int32        `db:"id"`
+	DaysBeforeCheckIn null.Int32   `db:"DaysBeforeCheckIn"`
+	PenaltyType       null.String  `db:"PenaltyType"`
+	PenaltyValue      null.Float32 `db:"PenaltyValue"`
+}
+
+type BookingAllocationAndItems struct {
+	ItemID       int32       `db:"id"`
+	Status       null.String `db:"Status"`
+	MetaObjectID null.String `db:"MetaObjectID"`
+	StatusTimes  null.String `db:"StatusTimes"`
+	LockedBy     null.Int32  `db:"LockedBy"`
+}
+
+type BookingItems struct {
+	ID                     int32       `db:"id"`
+	CreatorAgentID         null.Int32  `db:"CreatorAgentID"`
+	ProductQuantity        null.Int32  `db:"ProductQuantity"`
+	GroupID                null.Int32  `db:"GroupID"`
+	Type                   string      `db:"Type"`
+	Name                   null.String `db:"Name"`
+	Description            null.String `db:"Description"`
+	VenueID                int32       `db:"VenueID"`
+	ProductID              null.String `db:"ProductID"`
+	ProductType            null.String `db:"ProductType"`
+	ProductChargeBy        null.String `db:"ProductChargeBy"`
+	MealPlanCode           null.String `db:"MealPlanCode"`
+	MealPlanChargeBy       null.String `db:"MealPlanChargeBy"`
+	Price                  float32     `db:"Price"`
+	Currency               null.String `db:"Currency"`
+	PriceInBookingCurrency float32     `db:"PriceInBookingCurrency"`
+	Status                 string      `db:"Status"`
+	CancellationReasonID   null.Int32  `db:"CancellationReasonID"`
+	StatusChangedAt        []uint8     `db:"StatusChangedAt"`
+	PaymentType            null.String `db:"PaymentType"`
+	AccountID              null.Int32  `db:"AccountID"`
+	ConnectedToSupplier    null.String `db:"ConnectedToSupplier"`
+	CreationDate           []uint8     `db:"CreationDate"`
+	Immediate              null.Bool   `db:"Immediate"`
+	Product                Product
+}
+
+type BookingGroups struct {
+	ID             int32       `db:"ID"`
+	BookingID      int32       `db:"BookingID"`
+	PaxNationality string      `db:"PaxNationality"`
+	StartDate      []uint8     `db:"StartDate"`
+	EndDate        []uint8     `db:"EndDate"`
+	ParentID       null.String `db:"ParentID"`
+	Remark         null.String `db:"Remark"`
+}
+
+type Agent struct {
+	ID        int32  `db:"id"`
+	Name      string `db:"name"`
+	AccountID int32  `db:"accountID"`
+}
+
+func (s *allocatorService) getUserFromDatabase(userID *int32) (Agent, error) {
+	query := "SELECT id, name, AccountID FROM agents WHERE id = ?"
+	var agent Agent
+
+	rows, err := s.db.Query(query, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return Agent{}, ErrUserNotFound
+		}
+		return Agent{}, err
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		// Scan the values from the row into the user variable
+		err := rows.Scan(&agent.ID, &agent.Name, &agent.AccountID)
+		if err != nil {
+			return Agent{}, err
+		}
+	} else {
+		return Agent{}, ErrUserNotFound
+	}
+
+	return agent, nil
+}
+
+type Product struct {
+	ID                     int32
+	AffectedBy             string
+	AffectsAvailability    bool
+	AffectsRate            bool
+	AffectsRateAmount      bool
+	AffectsRateCalc        bool
+	AffectsRateSign        bool
+	AffectsRateTypeAgentID int64
+	AttachedTo             string
+	BaseCurrencyBestPrice  float64
+	Status                 string
+	ProductType            string `db:"product_type"`
+}
+
+type ProductObject struct {
+	ID     int32 `db:"id"`
+	RoomID int32 `db:"room_id"`
+	// Другие поля объекта продукта
+}
+
+type HistorySaver interface {
+	Save(history History) error
+}
+
+type historySaver struct {
+	db db.DB
+}
+
+type ProductObjectCriteria struct {
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	ProductIDs       []int32
+	PeriodType       string
+	VenueID          int32
+	ViewingAccountID int
+	Active           bool
+	IDs              []int
+}
+
+func joinInts(ints []int) string {
+	var strInts []string
+	for _, i := range ints {
+		strInts = append(strInts, strconv.Itoa(i))
+	}
+	return strings.Join(strInts, "|")
+}
+
+func convertInt32ToInt(int32Slice []int32) []int {
+	intSlice := make([]int, len(int32Slice))
+	for i, val := range int32Slice {
+		intSlice[i] = int(val)
+	}
+	return intSlice
+}
+
+// joinTimes joins two time.Time values into a string.
+func joinTimes(t1, t2 time.Time) string {
+	return fmt.Sprintf("%s|%s", t1.Format(time.RFC3339), t2.Format(time.RFC3339))
+}
+
+func (c *ProductObjectCriteria) Hash() string {
+	result := []string{
+		joinInts(convertInt32ToInt(c.ProductIDs)),
+		joinTimes(c.PeriodStart, c.PeriodEnd),
+		strconv.Itoa(int(c.VenueID)),
+		strconv.Itoa(c.ViewingAccountID),
+		strconv.FormatBool(c.Active),
+		joinInts(c.IDs),
+		c.PeriodType,
+	}
+
+	for i, v := range result {
+		if v == "" {
+			result[i] = "\x00" // Change empty string to binary zero
+		}
+	}
+	return strings.Join(result, "|")
+}
+
+func (s *allocatorService) AutoAllocate(ctx context.Context, agentID *int32, reservationID *int32, isNotify bool) {
+	logger := s.logger.WithMethod(ctx, "AllocateAll")
+	venueAutoAllocate, err := s.getVenueAutoAllocate(ctx, reservationID)
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+	if venueAutoAllocate {
+		fmt.Println("getVenueAutoAllocate==true")
+		s.autoAllocateReservation(ctx, *reservationID, isNotify)
+	}
+
+}
+
+func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, criteria ProductObjectCriteria) ([]ProductObject, error) {
+	hashCriteria := criteria.Hash()
+	query := "SELECT * FROM product_objects WHERE ID = ?"
+	rows, err := s.db.QueryContext(ctx, query, hashCriteria)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query product_objects: %w", err)
+	}
+	defer rows.Close()
+
+	var allocatableProductObjects []ProductObject
+	for rows.Next() {
+		var productObject ProductObject
+		// Populate productObject from the row
+		// ...
+
+		allocatableProductObjects = append(allocatableProductObjects, productObject)
+	}
+
+	return allocatableProductObjects, nil
+}
+
+func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservationID int32, isNotify bool) {
+	fmt.Printf("Value is: %d and type is: %T\\n", reservationID)
+	reservationToEdit, _ := s.getReservation(reservationID)
+	//fmt.Println(reservationToEdit)
+	allocatedStatus := "ALLOCATED"
+
+	for _, group := range reservationToEdit.Groups {
+		startDate := group.StartDate
+		endDate := group.EndDate
+
+		for _, item := range group.Items {
+			if item.Type == "PRODUCT" && item.Product.ProductType == "ROOM" {
+				product := item.Product
+
+				// Create the productObjectCriteria
+				productObjectCriteria := ProductObjectCriteria{
+					PeriodStart: startDate,
+					PeriodEnd:   endDate,
+					ProductIDs:  []int32{product.ID}, // Assuming product.ID is int
+					// ... set other criteria fields ...
+				}
+
+				// Fetch allocatable product objects using criteria
+				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, productObjectCriteria)
+				if err != nil {
+					// Handle the error
+				}
+
+				if len(allocatableProductObjects) > 0 {
+
+					err := s.updateAllocationStatus(item.Product.ID, allocatedStatus)
+					if err != nil {
+						// Handle the error
+					}
+					allocatableProductObjects = allocatableProductObjects[1:]
+				}
+			}
+		}
+	}
+
+		reservationService := ReservationService{}
+		reservationService.amend(reservationToEdit, true, isNotify, false)
+}
+
+func (s *allocatorService) allocateRoom(bookingProductID int32) (bool, error) {
+	// Construct the SQL query
+	var productObject ProductObject
+	metaObjectQuery := "SELECT * FROM product_objects as po WHERE po.Key='product_id' AND Value= ? "
+	err := s.db.QueryRow(metaObjectQuery, bookingProductID).Scan(
+		&productObject.ID,
+	)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to get metObjct: %w", err)
+	}
+
+	query := "INSERT INTO booking_allocations (BookingProductID, MetaObjectID, Status, StatusTimes, LockedBy) VALUES (?, ?, 'allocated', '[]', NULL) ON DUPLICATE KEY UPDATE MetaObjectID = VALUES(`MetaObjectID`), Status = VALUES(`Status`), StatusTimes = VALUES(`StatusTimes`), LockedBy = VALUES(`LockedBy`)"
+
+	// Execute the SQL query with the provided parameters
+	_, err = s.db.Exec(query, bookingProductID, productObject.ID)
+	if err != nil {
+		return false, fmt.Errorf("failed to update allocation status: %w", err)
+	}
+
+	return true, nil
+}
+
+func (s *allocatorService) updateAllocationStatus(bookingProductID int32, status string) error {
+	// Construct the SQL query
+	query := "UPDATE booking_allocations SET Status = ? WHERE BookingProductID = ?"
+
+	// Execute the SQL query with the provided parameters
+	_, err := s.db.Exec(query, status, bookingProductID)
+	if err != nil {
+		return fmt.Errorf("failed to update allocation status: %w", err)
+	}
+
+	return nil
+}
+
+func (s *allocatorService) getClientCompanies() (CasbinRuleAgents, error) {
+	var clientCompanies CasbinRuleAgents
+	query := "SELECT comments.* FROM comments WHERE entityID IN (846342) AND entityType = 'client'"
+
+	// Use QueryRow to fetch a single row result directly
+	err := s.db.QueryRow(query).Scan(
+		&clientCompanies.ID, &clientCompanies.AccountID, &clientCompanies.Name, &clientCompanies.Password, &clientCompanies.AccessLevel, &clientCompanies.Active,
+		&clientCompanies.Locale, &clientCompanies.DefaultVenueID, &clientCompanies.FirstTimeLogin, &clientCompanies.AllowedVenues, &clientCompanies.Email,
+		&clientCompanies.SendEmail, &clientCompanies.EmailNotifications, &clientCompanies.FavoritePages, &clientCompanies.Avatar, &clientCompanies.Role,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return CasbinRuleAgents{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return CasbinRuleAgents{}, err
+	}
+
+	return clientCompanies, nil
+}
+func (s *allocatorService) getSimpleComments() (Comment, error) {
+	var simpleComment Comment
+	query := "SELECT comments.* FROM comments WHERE entityID IN (846342) AND entityType = 'client'"
+
+	// Use QueryRow to fetch a single row result directly
+	err := s.db.QueryRow(query).Scan(
+		&simpleComment.ID,
+		&simpleComment.EntityType, &simpleComment.EntityID, &simpleComment.AgentID, &simpleComment.CommentType,
+		&simpleComment.Comment, &simpleComment.PostedAt, &simpleComment.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return Comment{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return Comment{}, err
+	}
+
+	return simpleComment, nil
+}
+
+func (s *allocatorService) getSimpleClients() (Client, error) {
+	var simpleClient Client
+	query := "SELECT ID, AccountID, Email, Phone, Title, Gender, Nationality, LanguageID, Identification, FirstName, LastName, BirthDate, Address, AdditionalInfo, AgentID, CreatedAt, Status FROM clients as cl WHERE ID IN ('846342')"
+
+	// Use QueryRow to fetch a single row result directly
+	err := s.db.QueryRow(query).Scan(
+		&simpleClient.ID, &simpleClient.AccountID, &simpleClient.Email, &simpleClient.Phone,
+		&simpleClient.Title, &simpleClient.Gender, &simpleClient.Nationality,
+		&simpleClient.LanguageID, &simpleClient.Identification,
+		&simpleClient.LastName, &simpleClient.BirthDate, &simpleClient.Address, &simpleClient.AdditionalInfo,
+		&simpleClient.AgentID, &simpleClient.CreatedAt, &simpleClient.Status,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return Client{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return Client{}, err
+	}
+
+	return simpleClient, nil
+}
+
+func (s *allocatorService) getSimpleAccount() (Account, error) {
+	var simpleAccount Account
+	query := "SELECT accounts.* FROM accounts WHERE ID IN ('1')"
+
+	// Use QueryRow to fetch a single row result directly
+	err := s.db.QueryRow(query).Scan(
+		&simpleAccount.ID,
+		&simpleAccount.Name, &simpleAccount.ContactPerson, &simpleAccount.ContactEmail, &simpleAccount.CountryCode, &simpleAccount.PhoneNumber,
+		&simpleAccount.Active, &simpleAccount.ReportBug, &simpleAccount.Type, &simpleAccount.TwoFactorAuth, &simpleAccount.AppVersion,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return Account{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return Account{}, err
+	}
+
+	return simpleAccount, nil
+}
+
+func (s *allocatorService) getFinalCompanies(bookingItemsIDs *[]int32) ([]Company, error) {
+	var finalCompanyList []Company
+
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *bookingItemsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "1870"
+	}
+	query := fmt.Sprintf("SELECT companies.* FROM companies INNER JOIN company_emails ON companies.ID = company_emails.CompanyID  LEFT JOIN company_phones ON companies.ID = company_phones.CompanyID  INNER JOIN company_reservations AS company_reservations ON companies.ID = company_reservations.CompanyID WHERE company_reservations.ReservationID IN (%s) GROUP BY companies.ID  ", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	rows, err := s.db.Query(query, interfaceIDs...)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return []Company{}, ErrUserNotFound
+		}
+		return []Company{}, err
+	}
+	defer rows.Close()
+
+	// Iterate over the result set and populate the finalCompanyList
+	for rows.Next() {
+		var finalCompany Company
+		err := rows.Scan(
+			&finalCompany.ID,
+			&finalCompany.Name,
+			&finalCompany.ShortName,
+			&finalCompany.CountryCode,
+			&finalCompany.State,
+			&finalCompany.City,
+			&finalCompany.Address,
+			&finalCompany.Address2,
+			&finalCompany.Zip,
+			&finalCompany.CompanyNumber,
+			&finalCompany.CompanyVatNumber,
+			&finalCompany.Iban,
+			&finalCompany.Swift,
+			&finalCompany.OnAccount,
+			&finalCompany.Preferences,
+			&finalCompany.Comments,
+			&finalCompany.ContactPerson,
+			&finalCompany.Status,
+		)
+		if err != nil {
+			return []Company{}, err
+		}
+		finalCompanyList = append(finalCompanyList, finalCompany)
+	}
+
+	return finalCompanyList, nil
+}
+
+func (s *allocatorService) getCasbinRuleAgents(bookingItemsIDs *[]int32) ([]CasbinRuleAgents, error) {
+	var сasbinRuleAgents CasbinRuleAgents
+	var сasbinRuleAgentsList []CasbinRuleAgents
+
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *bookingItemsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "1870"
+	}
+	query := fmt.Sprintf("SELECT agents.*, casbin_rule.v1 as Role FROM agents LEFT JOIN casbin_rule ON casbin_rule.v0=agents.ID AND casbin_rule.ptype='g' AND (casbin_rule.v2=agents.AccountID OR casbin_rule.v2=0) WHERE agents.ID IN (%s) GROUP BY agents.ID ORDER BY agents.ID", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&сasbinRuleAgents.ID, &сasbinRuleAgents.AccountID,
+		&сasbinRuleAgents.Name, &сasbinRuleAgents.Password, &сasbinRuleAgents.AccessLevel,
+		&сasbinRuleAgents.Active, &сasbinRuleAgents.Locale, &сasbinRuleAgents.DefaultVenueID,
+		&сasbinRuleAgents.FirstTimeLogin, &сasbinRuleAgents.AllowedVenues,
+		&сasbinRuleAgents.Email, &сasbinRuleAgents.SendEmail, &сasbinRuleAgents.EmailNotifications,
+		&сasbinRuleAgents.FavoritePages, &сasbinRuleAgents.Avatar, &сasbinRuleAgents.Role,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return []CasbinRuleAgents{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return []CasbinRuleAgents{}, err
+	}
+
+	return сasbinRuleAgentsList, nil
+}
+
+func (s *allocatorService) getBookingRemarks(bookingItemsIDs *[]int32) ([]BookingRemarks, error) {
+	var bookingRemarks BookingRemarks
+	var bookingRemarksList []BookingRemarks
+
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *bookingItemsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT BookingID, Remark FROM booking_remarks WHERE BookingID IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingRemarks.BookingID, &bookingRemarks.Remark,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return []BookingRemarks{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return []BookingRemarks{}, err
+	}
+
+	return bookingRemarksList, nil
+}
+
+func (s *allocatorService) getBookingChangesLog(bookingItemsIDs *[]int32) ([]BookingChangesLog, error) {
+	var bookingChangesLog BookingChangesLog
+	var bookingChangesLogList []BookingChangesLog
+
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *bookingItemsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT reservation_id, changes, agent, time, id FROM booking_changes_log WHERE reservation_id IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingChangesLog.ID, &bookingChangesLog.ReservationID, &bookingChangesLog.Changes, &bookingChangesLog.Agent, &bookingChangesLog.Time,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return []BookingChangesLog{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return []BookingChangesLog{}, err
+	}
+
+	return bookingChangesLogList, nil
+}
+
+func (s *allocatorService) getBookingCurrencyRates(bookingItemsIDs *[]int32) (BookingCurrencyRates, error) {
+	var bookingCurrencyRates BookingCurrencyRates
+	fmt.Printf("Value is: %d and type is BBB: %T\n", *bookingItemsIDs)
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *bookingItemsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT BookingID, Source, Target, Rate, Date, Final FROM booking_currency_rates WHERE BookingID IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingCurrencyRates.BookingID, &bookingCurrencyRates.Source,
+		&bookingCurrencyRates.Target, &bookingCurrencyRates.Rate,
+		&bookingCurrencyRates.Date, &bookingCurrencyRates.Final,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return BookingCurrencyRates{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return BookingCurrencyRates{}, err
+	}
+
+	return bookingCurrencyRates, nil
+}
+
+func (s *allocatorService) getBookingPax(groupsIDs *[]int32) (BookingPax, error) {
+	var bookingPax BookingPax
+	fmt.Printf("Value is: %d and type is BBB: %T\n", *groupsIDs)
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *groupsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT GroupID, ClientID FROM booking_pax WHERE GroupID IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingPax.GroupID,
+		&bookingPax.ClientID,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return BookingPax{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return BookingPax{}, err
+	}
+
+	return bookingPax, nil
+}
+
+func (s *allocatorService) getBookingGroupRatePlan(groupsIDs *[]int32) (BookingGroupRatePlan, error) {
+	var bookingGroupRatePlan BookingGroupRatePlan
+	fmt.Printf("Value is: %d and type is BBB: %T\n", *groupsIDs)
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *groupsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT RatePlanID,GroupId,JsonData FROM booking_group_rate_plan WHERE GroupId IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingGroupRatePlan.RatePlanID, &bookingGroupRatePlan.GroupId, &bookingGroupRatePlan.JsonData,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return BookingGroupRatePlan{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return BookingGroupRatePlan{}, err
+	}
+
+	return bookingGroupRatePlan, nil
+}
+
+func (s *allocatorService) getBookingItemRateDetails(bookingItemsIDs *[]int32) (BookingItemRateDetails, error) {
+	var bookingItemRateDetails BookingItemRateDetails
+	fmt.Printf("Value is: %d and type is BBB: %T\n", *bookingItemsIDs)
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *bookingItemsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT ItemID, Date, Amount, AmountBeforeTax, Currency, OriginalAmount FROM booking_item_rate_details WHERE ItemID IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingItemRateDetails.ItemID, &bookingItemRateDetails.Date, &bookingItemRateDetails.Amount, &bookingItemRateDetails.AmountBeforeTax,
+		&bookingItemRateDetails.Currency, &bookingItemRateDetails.OriginalAmount,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return BookingItemRateDetails{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return BookingItemRateDetails{}, err
+	}
+
+	return bookingItemRateDetails, nil
+}
+
+func (s *allocatorService) getProductAffected(bookingItemsIDs *[]int32) (ProductAffected, error) {
+	var productAffected ProductAffected
+	fmt.Printf("Value is: %d and type is BBB: %T\n", *bookingItemsIDs)
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *bookingItemsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT id, product_id, client_id, used_at, is_used, group_id, use_at, reservation_item_id FROM product_affected WHERE reservation_item_id IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&productAffected.ID, &productAffected.ProductID,
+		&productAffected.ClientID, &productAffected.UsedAt,
+		&productAffected.IsUsed, &productAffected.GroupID,
+		&productAffected.UseAt, &productAffected.ReservationItemID,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return ProductAffected{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return ProductAffected{}, err
+	}
+
+	return productAffected, nil
+}
+
+func (s *allocatorService) getBookingItemCancellationPolicies(bookingItemsIDs *[]int32) (BookingItemCancellationPolicies, error) {
+	var bookingItemCancellationPolicies BookingItemCancellationPolicies
+	fmt.Printf("Value is: %d and type is BBB: %T\n", *bookingItemsIDs)
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *bookingItemsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT ItemID, DaysBeforeCheckIn, PenaltyType, PenaltyValue FROM booking_item_cancellation_policies WHERE ItemID IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingItemCancellationPolicies.ItemID,
+		&bookingItemCancellationPolicies.DaysBeforeCheckIn,
+		&bookingItemCancellationPolicies.PenaltyType,
+		&bookingItemCancellationPolicies.PenaltyValue,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return BookingItemCancellationPolicies{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return BookingItemCancellationPolicies{}, err
+	}
+
+	return bookingItemCancellationPolicies, nil
+}
+
+func (s *allocatorService) getBookingAllocationAndItems(bookingItemsIDs *[]int32) (BookingAllocationAndItems, error) {
+	var bookingAllocationAndItems BookingAllocationAndItems
+	fmt.Printf("Value is: %d and type is BBB: %T\n", *bookingItemsIDs)
+	// Dereference the pointer to get the actual []int32 slice
+	ids := *bookingItemsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT bi.ID AS ItemID, ba.Status, ba.MetaObjectID, ba.StatusTimes, ba.LockedBy FROM booking_allocations AS ba INNER JOIN booking_items AS bi ON ba.BookingProductID = bi.ID WHERE bi.ID IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingAllocationAndItems.ItemID,
+		&bookingAllocationAndItems.Status,
+		&bookingAllocationAndItems.MetaObjectID,
+		&bookingAllocationAndItems.StatusTimes,
+		&bookingAllocationAndItems.LockedBy,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return BookingAllocationAndItems{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return BookingAllocationAndItems{}, err
+	}
+
+	return bookingAllocationAndItems, nil
+}
+
+func (s *allocatorService) getBookingItems(bookingGroupsIDs *[]int32) ([]BookingItems, error) {
+
+	var bookingItems BookingItems
+	var bookingItemsList []BookingItems
+	ids := *bookingGroupsIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	query := fmt.Sprintf("SELECT booking_items.ID, booking_items.CreatorAgentID, booking_items.ProductQuantity, GroupID, Type, Name, Description, VenueID, ProductID, ProductType, ProductChargeBy, MealPlanCode, MealPlanChargeBy, Price, Currency, PriceInBookingCurrency, booking_items.Status, booking_items.CancellationReasonID, booking_items.StatusChangedAt, PaymentType, AccountID, ConnectedToSupplier, CreationDate, Immediate FROM booking_items WHERE GroupID IN (%s)", strings.Join(placeholders, ","))
+
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingItems.ID,
+		&bookingItems.CreatorAgentID,
+		&bookingItems.ProductQuantity,
+		&bookingItems.GroupID,
+		&bookingItems.Type,
+		&bookingItems.Name,
+		&bookingItems.Description,
+		&bookingItems.VenueID,
+		&bookingItems.ProductID,
+		&bookingItems.ProductType,
+		&bookingItems.ProductChargeBy,
+		&bookingItems.MealPlanCode,
+		&bookingItems.MealPlanChargeBy,
+		&bookingItems.Price,
+		&bookingItems.Currency,
+		&bookingItems.PriceInBookingCurrency,
+		&bookingItems.Status,
+		&bookingItems.CancellationReasonID,
+		&bookingItems.StatusChangedAt,
+		&bookingItems.PaymentType,
+		&bookingItems.AccountID,
+		&bookingItems.ConnectedToSupplier,
+		&bookingItems.CreationDate,
+		&bookingItems.Immediate,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return []BookingItems{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return []BookingItems{}, err
+	}
+
+	return bookingItemsList, nil
+}
+
+func (s *allocatorService) getBookingGroups(reservationIDs *[]int32) ([]BookingGroups, error) {
+	var bookingGroups BookingGroups
+	var bookingGroupsList []BookingGroups
+	ids := *reservationIDs
+
+	// Prepare the query with the appropriate number of placeholders for the IN clause
+	placeholders := make([]string, len(ids))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+
+	query := "SELECT ID, BookingID, PaxNationality, StartDate, EndDate, ParentID, remarks.Remark AS Remark FROM booking_groups AS bg LEFT JOIN booking_groups_remarks AS remarks ON remarks.GroupID=bg.ID WHERE BookingID IN (?)"
+	// Convert []int32 to []interface{} for QueryRow
+	var interfaceIDs []interface{}
+	for _, id := range ids {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+	err := s.db.QueryRow(query, interfaceIDs...).Scan(
+		&bookingGroups.ID,
+		&bookingGroups.BookingID,
+		&bookingGroups.PaxNationality,
+		&bookingGroups.StartDate,
+		&bookingGroups.EndDate,
+		&bookingGroups.ParentID,
+		&bookingGroups.Remark,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return []BookingGroups{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return []BookingGroups{}, err
+	}
+
+	return bookingGroupsList, nil
+}
+
+func (s *allocatorService) getBooking(reservationID *int32) (model.Booking, error) {
+	var booking model.Booking
+	fmt.Printf("Value is: %d and type is AAA: %T\n", *reservationID)
+	bookingQuery := "SELECT bookings.ID AS BookingID, bookings.Price, bookings.Currency, bookings.AgentID, bookings.Date, bookings.ProviderReference, bookings.Channel, bookings.Status AS Status, bookings.IsManual, bookings.Client, bookings.CancellationDate, bookings.PaymentOption, bookings.Segment, bookings.Source, bookings.FOCT, bookings.MetaGroupID, bookings.ClientID, bookings.IsVirtualCC, bookings.ChannelCommissionType, bookings.ChannelCommissionValue, bookings.ReleazeTime, bookings.requestedCheckInTime, bookings.requestedCheckOutTime FROM bookings AS bookings WHERE ID = ?"
+
+	// Use QueryRow to fetch a single row result directly
+	err := s.db.QueryRow(bookingQuery, *reservationID).Scan(
+		&booking.ID,
+		&booking.Price,
+		&booking.Currency,
+		&booking.AgentID,
+		&booking.Date,
+		&booking.ProviderReference,
+		&booking.Channel,
+		&booking.Status,
+		&booking.IsManual,
+		&booking.Client,
+		&booking.CancellationDate,
+		&booking.PaymentOption,
+		&booking.Segment,
+		&booking.Source,
+		&booking.FOCT,
+		&booking.MetaGroupID,
+		&booking.ClientID,
+		&booking.IsVirtualCC,
+		&booking.ChannelCommissionType,
+		&booking.ChannelCommissionValue,
+		&booking.ReleazeTime,
+		&booking.RequestedCheckInTime,
+		&booking.RequestedCheckOutTime,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Error=>")
+			return model.Booking{}, ErrUserNotFound
+		}
+		fmt.Println("Error2=>")
+		return model.Booking{}, err
+	}
+
+	return booking, nil
+}
+
+func (s *allocatorService) findReservationByID(ctx context.Context, reservationID *int32) (interface{}, error) {
+	var reservation Reservation
+	logger := s.logger.WithMethod(ctx, "AllocateAll")
+	booking, err := s.getBooking(reservationID)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		return nil, err
+	}
+
+	fmt.Println("Json=>")
+	bookingJSON, err := json.Marshal(booking)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	fmt.Println(string(bookingJSON))
+
+	var bookingGroups []BookingGroups
+	var reservationIDs []int32
+	reservationIDs = append(reservationIDs, booking.ID)
+
+	bookingGroups, err = s.getBookingGroups(&reservationIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingGroupsJSON, err := json.Marshal(bookingGroups)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingGroupsJSON))
+
+	var bookingGroupsIDs []int32
+	for _, item := range bookingGroups {
+		fmt.Printf("Value is: %d and type is ACC: %T\n", item.ID)
+		bookingGroupsIDs = append(bookingGroupsIDs, item.ID)
+	}
+
+	bookingItems, err := s.getBookingItems(&bookingGroupsIDs)
+	var bookingItemsIDs []int32
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingItemsJSON, err := json.Marshal(bookingItems)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingItemsJSON))
+
+	for _, item := range bookingItems {
+		fmt.Printf("Value is: %d and type is ACC: %T\n", item.ID)
+		bookingItemsIDs = append(bookingItemsIDs, item.ID)
+	}
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	bookingAllocationAndItems, err := s.getBookingAllocationAndItems(&bookingItemsIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingAllocationAndItemsJSON, err := json.Marshal(bookingAllocationAndItems)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingAllocationAndItemsJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	bookingItemCancellationPolicies, err := s.getBookingItemCancellationPolicies(&bookingItemsIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingItemCancellationPoliciesJSON, err := json.Marshal(bookingItemCancellationPolicies)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingItemCancellationPoliciesJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	productAffected, err := s.getProductAffected(&bookingItemsIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	productAffectedJSON, err := json.Marshal(productAffected)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(productAffectedJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	bookingItemRateDetails, err := s.getBookingItemRateDetails(&bookingItemsIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingItemRateDetailsJSON, err := json.Marshal(bookingItemRateDetails)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingItemRateDetailsJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	bookingGroupRatePlan, err := s.getBookingGroupRatePlan(&bookingGroupsIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingGroupRatePlanJSON, err := json.Marshal(bookingGroupRatePlan)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingGroupRatePlanJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	bookingPax, err := s.getBookingPax(&bookingGroupsIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingPaxJSON, err := json.Marshal(bookingPax)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingPaxJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	bookingCurrencyRates, err := s.getBookingCurrencyRates(&reservationIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingCurrencyRatesJSON, err := json.Marshal(bookingCurrencyRates)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingCurrencyRatesJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	bookingChangesLog, err := s.getBookingChangesLog(&reservationIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingChangesLogJSON, err := json.Marshal(bookingChangesLog)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingChangesLogJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	bookingRemarks, err := s.getBookingRemarks(&reservationIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	bookingRemarksJSON, err := json.Marshal(bookingRemarks)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(bookingRemarksJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	casbinRuleAgents, err := s.getCasbinRuleAgents(&reservationIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	casbinRuleAgentsJSON, err := json.Marshal(casbinRuleAgents)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(casbinRuleAgentsJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	simpleAccount, err := s.getSimpleAccount()
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	simpleAccountJSON, err := json.Marshal(simpleAccount)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(simpleAccountJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	simpleClients, err := s.getSimpleClients()
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	simpleClientsJSON, err := json.Marshal(simpleClients)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(simpleClientsJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	simpleComments, err := s.getSimpleComments()
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	simpleCommentsJSON, err := json.Marshal(simpleComments)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(simpleCommentsJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	clientCompanies, err := s.getClientCompanies()
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	clientCompaniesJSON, err := json.Marshal(clientCompanies)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(clientCompaniesJSON))
+
+	fmt.Printf("Value is: %d and type is CCC: %T\n", bookingItemsIDs)
+	finalCompanies, err := s.getFinalCompanies(&reservationIDs)
+
+	if err != nil {
+		logger.Error("Error getting booking:", zap.Error(err))
+		//return nil, err
+	}
+
+	// Print the JSON to the console
+
+	finalCompaniesJSON, err := json.Marshal(finalCompanies)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+
+	// Print the JSON to the console
+	fmt.Println(string(finalCompaniesJSON))
+
+	return reservation, nil
+}
+*/

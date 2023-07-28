@@ -1,0 +1,42 @@
+output   = "entity"
+pkgname   = "entity"
+wipe     = true
+no-tests = false
+add-enum-types = true
+
+[mysql]
+  host    = "localhost"
+  port    = 3306
+  dbname  = "allocation"
+  user    = "user"
+  pass    = "user_password"
+  sslmode = "false"
+  blacklist = ["_migrations_log","accounting_balance","accounting_changes_log","accounting_document_connections","accounting_document_initial_to_entity","accounting_document_lines","accounting_documents","accounting_payment_details","accounting_service_types","accounts","accounts_meta","action_logs","action_logs_data","agents","availability","booking_allocations","booking_changes_log","booking_currency_rates","booking_group_rate_plan","booking_groups","booking_groups_remarks","booking_item_cancellation_policies","booking_item_rate_details","booking_items","booking_items_backup","booking_meta_group","booking_pax","booking_remarks","bulletins","cancellation_policies","cancellation_policies_pre_sets","cancellation_policies_pre_sets_mapping","cancellation_reasons","casbin_rule","cc_authorization_payments","cities","client_companies","clients","comments","companies","company_emails","company_phones","company_reservations","countries","countries_languages","credit_cards","currencies","currencies_id","currencies_rates_today","currency_rates","dynamic_templates","email_contacts","emails","entity_locations","facilities","facility_families","graph_ql_logs","groups","groups_participants","guide_chapters","guide_contents","guide_images","guides","history_logs","history_logs_data","internal_communication","internal_communication_agents","internal_communication_reservation_link","inventory_manual_history","inventory_rate_plans","inventory_sold","languages","location_addresses","locks","meal_plans","meta_product","notifications","orders","pax_supplements","payment_links","payment_logs","payment_logs_detail","payment_products","payment_settings","permissions_meta","pms_providers","pms_update_queue","pms_update_queue_hotel_blacklist","product_accounts","product_affected","product_channels","product_descriptions","product_images","product_object_statuses","product_objects","products","products_backup","products_deprecated","rate_manual_history","rate_plan_affections","rate_plan_auto_closeout","rate_plan_child_rate","rate_plan_conditions","rate_plan_guarantee","rate_plan_links","rate_plan_meal_plans","rate_plan_payable_related_products","rate_plan_products","rate_plan_related_products","rate_plans","rates","registration_form","rule_condition_types","rule_conditions","rule_conditions_archive","rules","rules_archive","segment_groups","segments","standalone_billing_items","standalone_item","tags","tags_entities","tasks","tasks_and_notifications_comments","tax_brackets","tax_groups","temp_table","terminal_types","terminals","test","vault","venue_accounts","venue_channels","venue_company_contracts","venue_currency_rates","venue_descriptions","venue_facilities","venue_images","venue_invoice_custom_details","venue_pms_data","venue_policies","venue_provider_segments","venue_tax_applied_to","venue_taxes","venue_types","venues","venues_meta","wholesaler_data"]
+
+[[types]]
+  [types.match]
+  type = "uint"
+  [types.replace]
+  type = "uint32"
+
+[[types]]
+  [types.match]
+  type = "int"
+  [types.replace]
+  type = "int32"
+
+[[types]]
+  [types.match]
+  type = "null.Int"
+  nullable = true
+  [types.replace]
+  type = "null.Int32"
+  nullable = true
+
+[[types]]
+  [types.match]
+  type = "null.Uint"
+  nullable = true
+  [types.replace]
+  type = "null.Uint32"
+  nullable = true
