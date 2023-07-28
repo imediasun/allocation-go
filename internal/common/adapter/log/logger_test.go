@@ -2,11 +2,10 @@ package log_test
 
 import (
 	"context"
-	"testing"
-
 	"github.com/brianvoe/gofakeit"
 	"github.com/stretchr/testify/suite"
 	"go.uber.org/zap"
+	"testing"
 
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/log"
 )
