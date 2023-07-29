@@ -957,7 +957,7 @@ func joinArrayInts(ints [][]int) string {
 	return strings.Join(result, "|")
 }*/
 
-func (s *allocatorService) AutoAllocate(ctx context.Context, agentID *int32, reservationID int, isNotify bool) {
+func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, isNotify bool) {
 	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
