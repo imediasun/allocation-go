@@ -998,6 +998,8 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	// Create the full SQL query
 	query := fmt.Sprintf("SELECT DISTINCT ID FROM product_objects AS po LEFT JOIN product_object_statuses AS pos ON pos.MetaObjectID = po.ID WHERE %s", where)
 
+	fmt.Printf("Query IS: %d AlocatableProductObjects: %T\\n", query)
+
 	// Create the list of parameters for the SQL query
 	params := append(values, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
 
