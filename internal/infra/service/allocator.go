@@ -465,8 +465,8 @@ func NewAllocatorService(
 func (s *allocatorService) getVenueAutoAllocate(ctx context.Context, reservationID *int32) (bool, error) {
 
 	var venueAutoAllocate VenueAutoAllocate
-
-	query := `SELECT venues.AutoAllocate
+	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
+	query := `SELECT MAX(venues.AutoAllocate) as AutoAllocate
 FROM bookings
 JOIN booking_groups ON bookings.ID = booking_groups.BookingID
 JOIN booking_items ON booking_groups.ID = booking_items.GroupID
@@ -477,13 +477,13 @@ WHERE bookings.ID = ?;`
 		&venueAutoAllocate.AutoAllocate,
 	)
 
+	fmt.Printf("Value is: %d and type is AutoAllocatable: %T\\n", venueAutoAllocate.AutoAllocate)
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			fmt.Println("Error=>")
 			return false, ErrUserNotFound
 		}
-		fmt.Println("Error2=>")
-		return false, err
 	}
 
 	return true, err
@@ -958,10 +958,12 @@ func joinArrayInts(ints [][]int) string {
 }*/
 
 func (s *allocatorService) AutoAllocate(ctx context.Context, agentID *int32, reservationID *int32, isNotify bool) {
+	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
+
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	venueAutoAllocate, err := s.getVenueAutoAllocate(ctx, reservationID)
 	if err != nil {
-		logger.Error("Error getting booking:", zap.Error(err))
+		logger.Error("Error getting venueAutoAllocate:", zap.Error(err))
 		//return nil, err
 	}
 	fmt.Println("venueAutoAllocate")

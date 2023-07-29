@@ -24,11 +24,15 @@ RUN go clean -modcache
 # Copy only `.go` files, if you want all files to be copied then replace `with `COPY . .` for the code below.
 COPY . .
 
-EXPOSE 3003
+EXPOSE 8080
 
 # Install our third-party application for hot-reloading capability.
 RUN go mod tidy
 RUN go get github.com/githubnemo/CompileDaemon
 RUN go install github.com/githubnemo/CompileDaemon
 
-ENTRYPOINT CompileDaemon -polling -log-prefix=false -build="go build ./cmd/allocator" -command="./" -directory="./"
+# Compile the application and make it executable
+RUN go build -o ./allocator ./cmd/allocator
+RUN chmod +x ./allocator
+
+ENTRYPOINT CompileDaemon -polling -log-prefix=false -build="go build -o ./allocator ./cmd/allocator" -command="./allocator" -directory="./"
