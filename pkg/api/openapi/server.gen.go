@@ -21,7 +21,7 @@ type ServerInterface interface {
 	AllocateAll(ctx echo.Context,reservationIDs []int32, userID *int32) error
 	// Creates a new pet
 	// (POST /pets)
-	AutoAllocate(ctx echo.Context, agentID *int32,reservationID *int32, isNotify bool) error
+	AutoAllocate(ctx echo.Context, agentID *int32,reservationID int32, isNotify bool) error
 	// Deletes a pet by ID
 	// (DELETE /pets/{id})
 	DeletePet(ctx echo.Context, id int64) error
@@ -91,7 +91,7 @@ func (w *ServerInterfaceWrapper) AutoAllocate(ctx echo.Context) error {
 	}
 	fmt.Printf("Value is: %d and type IS  is: %T\\n", requestBody.ReservationID)
 	// Invoke the callback with the unmarshalled arguments
-	err = w.Handler.AutoAllocate(ctx, &requestBody.AgentID, &requestBody.ReservationID, true)
+	err = w.Handler.AutoAllocate(ctx, &requestBody.AgentID, requestBody.ReservationID, true)
 	return err
 }
 
