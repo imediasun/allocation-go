@@ -28,7 +28,7 @@ var ErrUserNotFound = errors.New("user not found")
 //Пробуем mo.63d112187cd45 сделать available
 type AllocateResult struct {
 	Status        string
-	BookingID     int32
+	BookingID     int
 	GroupID       int32
 	ItemID        []uint8
 	AllocatedRoom ProductObject
@@ -83,7 +83,7 @@ type CurrencyRate struct {
 }
 
 type Reservation struct {
-	ID                  int32
+	ID                  int
 	Creator             Agent
 	Price               Money
 	CreationDate        time.Time
@@ -121,7 +121,7 @@ func (s *allocatorService) getAgent(id int32) (*Agent, error) {
 	return agent, nil
 }
 
-func (s *allocatorService) getCurrencyRates(bookingID int32) ([]CurrencyRate, error) {
+func (s *allocatorService) getCurrencyRates(bookingID int) ([]CurrencyRate, error) {
 	rows, err := s.db.Query("SELECT BookingID, Source, Target, Rate, Date, Final FROM booking_currency_rates WHERE BookingID = ?", bookingID)
 	if err != nil {
 		return nil, err
@@ -200,7 +200,7 @@ func (s *allocatorService) getItemsForGroup(ctx context.Context, groupID int32) 
 	return items, nil
 }
 
-func (s *allocatorService) getGroups(ctx context.Context, bookingID int32) ([]ReservationGroup, error) {
+func (s *allocatorService) getGroups(ctx context.Context, bookingID int) ([]ReservationGroup, error) {
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 
@@ -362,7 +362,7 @@ func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int
 	return reservationList, nil
 }
 
-func (s *allocatorService) getReservation(ctx context.Context, bookingID int32) (*Reservation, error) {
+func (s *allocatorService) getReservation(ctx context.Context, bookingID int) (*Reservation, error) {
 
 	fmt.Printf("Value is: %d and type is BookingID: %T\\n", bookingID)
 	row := s.db.QueryRow("SELECT ID,ProviderReference,Channel,Client,PaymentOption,CancellationDate,Segment,Source,Foct,MetaGroupID	FROM bookings WHERE ID = ?", bookingID)
@@ -462,7 +462,7 @@ func NewAllocatorService(
 	}
 }
 
-func (s *allocatorService) getVenueAutoAllocate(ctx context.Context, reservationID int32) (bool, error) {
+func (s *allocatorService) getVenueAutoAllocate(ctx context.Context, reservationID int) (bool, error) {
 
 	var venueAutoAllocate VenueAutoAllocate
 	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
@@ -479,7 +479,7 @@ WHERE bookings.ID = ?;`
 
 	fmt.Printf("Value is: %d and type is AutoAllocatable: %T\\n", venueAutoAllocate.AutoAllocate)
 
-	if err != nil {
+	if err != nil || !venueAutoAllocate.AutoAllocate {
 		if err == sql.ErrNoRows {
 			fmt.Println("Error=>")
 			return false, ErrUserNotFound
@@ -957,7 +957,7 @@ func joinArrayInts(ints [][]int) string {
 	return strings.Join(result, "|")
 }*/
 
-func (s *allocatorService) AutoAllocate(ctx context.Context, agentID *int32, reservationID int32, isNotify bool) {
+func (s *allocatorService) AutoAllocate(ctx context.Context, agentID *int32, reservationID int, isNotify bool) {
 	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
@@ -1040,7 +1040,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, c
 	return allocatableProductObjects, nil
 }
 
-func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservationID int32, isNotify bool) {
+func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservationID int, isNotify bool) {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	fmt.Printf("Value is: %d and type is ReservationID: %T\\n", reservationID)
 	reservationToEdit, err := s.getReservation(ctx, reservationID)
@@ -1140,7 +1140,7 @@ func convertUint8ToInt32(uint8Slice []uint8) []int32 {
 	return int32Slice
 }
 
-func (s *allocatorService) updateAllocationStatus(ctx context.Context, reservationID int32, bookingProductID string, status string, productObjects []ProductObject) error {
+func (s *allocatorService) updateAllocationStatus(ctx context.Context, reservationID int, bookingProductID string, status string, productObjects []ProductObject) error {
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	fmt.Println("updateAllocationStatus")

@@ -54,7 +54,7 @@ type AllocateAllParams struct {
 type AddPetJSONRequestBody = AllocateAll
 
 type AutoAllocateRequestBody struct {
-	ReservationID int32 `json:"reservationID"`
+	ReservationID int `json:"reservationID"`
 	AgentID         int32   `json:"agentID"`
 	IsNotify         bool   `json:"isNotify"`
 }

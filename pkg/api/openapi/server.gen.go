@@ -21,7 +21,7 @@ type ServerInterface interface {
 	AllocateAll(ctx echo.Context,reservationIDs []int32, userID *int32) error
 	// Creates a new pet
 	// (POST /pets)
-	AutoAllocate(ctx echo.Context, agentID *int32,reservationID int32, isNotify bool) error
+	AutoAllocate(ctx echo.Context, agentID *int32,reservationID int, isNotify bool) error
 	// Deletes a pet by ID
 	// (DELETE /pets/{id})
 	DeletePet(ctx echo.Context, id int64) error
