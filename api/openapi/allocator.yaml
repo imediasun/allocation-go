@@ -180,14 +180,10 @@ components:
     AutoAllocate:
       required:
         - reservationID
-        - agentID
       properties:
         reservationID:
           type: integer
           description: Reservation ID
-        agentID:
-          type: integer
-          description: Agent Id
 
     Error:
       required:
