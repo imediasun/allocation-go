@@ -62,10 +62,10 @@ func (s *AllocatorService) AllocateAll(ctx echo.Context, reservationIDs []int32,
 	return nil
 }
 
-func (s *AllocatorService) AutoAllocate(ctx echo.Context, userID *int32, reservationID int, isNotify bool) error {
+func (s *AllocatorService) AutoAllocate(ctx echo.Context, reservationID int, isNotify bool) error {
 	fmt.Printf("Value is: %d and type is: %T\\n", reservationID)
 	// Call the AllocateAll method and capture the slice of AllocateResult and error
-	s.allocatorService.AutoAllocate(s.ctx, userID, reservationID, true)
+	s.allocatorService.AutoAllocate(s.ctx, reservationID, true)
 
 	s.logger.Info("AddPet")
 

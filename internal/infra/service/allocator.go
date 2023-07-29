@@ -463,7 +463,7 @@ func NewAllocatorService(
 }
 
 func (s *allocatorService) getVenueAutoAllocate(ctx context.Context, reservationID int) (bool, error) {
-    fmt.Println("test")
+	fmt.Println("test")
 	var venueAutoAllocate VenueAutoAllocate
 	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
 	query := `SELECT MAX(venues.AutoAllocate) as AutoAllocate
