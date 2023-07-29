@@ -462,7 +462,7 @@ func NewAllocatorService(
 	}
 }
 
-func (s *allocatorService) getVenueAutoAllocate(ctx context.Context, reservationID *int32) (bool, error) {
+func (s *allocatorService) getVenueAutoAllocate(ctx context.Context, reservationID int32) (bool, error) {
 
 	var venueAutoAllocate VenueAutoAllocate
 	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
@@ -957,7 +957,7 @@ func joinArrayInts(ints [][]int) string {
 	return strings.Join(result, "|")
 }*/
 
-func (s *allocatorService) AutoAllocate(ctx context.Context, agentID *int32, reservationID *int32, isNotify bool) {
+func (s *allocatorService) AutoAllocate(ctx context.Context, agentID *int32, reservationID int32, isNotify bool) {
 	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
@@ -970,7 +970,7 @@ func (s *allocatorService) AutoAllocate(ctx context.Context, agentID *int32, res
 	fmt.Println(venueAutoAllocate)
 	if venueAutoAllocate {
 		fmt.Println("getVenueAutoAllocate==true")
-		s.autoAllocateReservation(ctx, *reservationID, isNotify)
+		s.autoAllocateReservation(ctx, reservationID, isNotify)
 	}
 
 }
