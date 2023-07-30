@@ -30,7 +30,7 @@ type AllocateResult struct {
 	Status        string
 	BookingID     int
 	GroupID       int32
-	ItemID        []uint8
+	ItemID        int
 	AllocatedRoom ProductObject
 	Reason        string
 }
@@ -520,7 +520,7 @@ func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int3
 	return allocatableRooms, nil
 }
 
-func (s *allocatorService) getAllocatedObject(itemID []uint8) (bool, error) {
+func (s *allocatorService) getAllocatedObject(itemID int) (bool, error) {
 	var status string
 	query := "SELECT status FROM booking_allocations WHERE BookingProductID = ? "
 
@@ -807,7 +807,7 @@ type BookingAllocationAndItems struct {
 }
 
 type BookingItems struct {
-	ID        []uint8     `db:"id"`
+	ID        int         `db:"id"`
 	Type      string      `db:"Type"`
 	VenueID   int32       `db:"VenueID"`
 	ProductID null.String `db:"ProductID"`
@@ -1115,7 +1115,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 				fmt.Println(len(allocatableProductObjects))
 				if len(allocatableProductObjects) > 0 {
 					fmt.Println("InCheck")
-					err := s.updateAllocationStatus(ctx, reservationID, item.Product.ID, allocatedStatus, allocatableProductObjects)
+					err := s.updateAllocationStatus(ctx, item.ID, item.Product.ID, allocatedStatus, allocatableProductObjects)
 					if err != nil {
 						// Handle the error
 					}
