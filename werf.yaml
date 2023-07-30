@@ -1,0 +1,5 @@
+configVersion: 1
+project: noovy-backend
+---
+image: allocation-go
+dockerfile: Dockerfile
