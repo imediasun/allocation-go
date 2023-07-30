@@ -3,3 +3,4 @@ project: noovy-backend
 ---
 image: allocation-go
 dockerfile: Dockerfile
+args: { "GITLAB_TOKEN": "glpat-HUgXJUr3CqcKD7PzbJ3r" }
