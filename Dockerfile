@@ -19,7 +19,7 @@ COPY ./go.sum ./
 RUN go mod download
 
 # Clear the Go module cache before getting the packages
-RUN go clean -modcache
+RUN go clean -modcache || true
 
 # Copy only `.go` files, if you want all files to be copied then replace `with `COPY . .` for the code below.
 COPY . .
