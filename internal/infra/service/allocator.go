@@ -1179,8 +1179,11 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingPr
 	fmt.Println(string(productObjectsJson))
 	for _, layout := range productObjects {
 		var bookingProductIdUpdated int
+
 		err = s.db.QueryRow("SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ?", layout.ID).Scan(&bookingProductIdUpdated)
+		fmt.Printf("SELECT_RESULT: %d bookingProductIdUpdated: %T\\n", bookingProductIdUpdated)
 		if err != nil {
+			fmt.Printf("INSERT_CRITERIA: %d bookingProductID: %T\\n", bookingProductID)
 			// If the row doesn't exist, insert a new row with the provided data
 			_, err = s.db.Exec("INSERT INTO booking_allocations (BookingProductID,MetaObjectID, Status, StatusTimes, LockedBy) VALUES (?,?, ?, ?, ?)", bookingProductID, layout.ID, "allocated", "[]", nil)
 			if err != nil {
@@ -1188,6 +1191,7 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingPr
 			}
 			fmt.Println("New row inserted successfully!")
 		} else {
+			fmt.Printf("UPDATE_CRITERIA: %d layout.ID: %T\\n", layout.ID)
 			// If the row already exists, update it with the provided data
 			_, err = s.db.Exec("UPDATE booking_allocations SET Status = ?, StatusTimes = ?, LockedBy = ? WHERE MetaObjectID = ?", "allocated", "[]", nil, layout.ID)
 			if err != nil {
