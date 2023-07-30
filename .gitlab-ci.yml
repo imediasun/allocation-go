@@ -1,0 +1,14 @@
+stages:
+  - build
+
+before_script:
+  - source $(werf ci-env gitlab --as-file)
+  - werf cr login --log-verbose=true --log-debug=true -u $WERF_USERNAME -p $WERF_PASSWORD gitlab.hotel.tools:5050
+  
+Build image:
+  stage: build
+  image: registry.werf.io/werf/werf
+  script:
+    - werf build --repo gitlab.hotel.tools:5050/${CI_PROJECT_PATH} --add-custom-tag "%image%-latest"
+  tags:
+    - "werf"
