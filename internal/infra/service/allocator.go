@@ -1161,6 +1161,7 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingPr
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	fmt.Println("updateAllocationStatus")
+	fmt.Printf("INCOME_PARAMETER: %d bookingProductID: %T\\n", bookingProductID)
 	/*	fmt.Printf("Value is: %d and type is 33: %T\\n", bookingProductID)
 		bookingProductIDResults := bookingProductID*/
 	fmt.Println("Json098=>")
