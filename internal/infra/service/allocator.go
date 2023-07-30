@@ -629,7 +629,7 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 					}
 
 					fmt.Println(string(roomsByProductJson))
-					err = s.updateAllocationStatus(ctx, "allocated", roomsByProduct)
+					err = s.updateAllocationStatus(ctx, item.ID, "allocated", roomsByProduct)
 					if err != nil {
 						return nil, err
 					}
@@ -1115,7 +1115,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 				fmt.Println(len(allocatableProductObjects))
 				if len(allocatableProductObjects) > 0 {
 					fmt.Println("InCheck")
-					err := s.updateAllocationStatus(ctx, allocatedStatus, allocatableProductObjects)
+					err := s.updateAllocationStatus(ctx, item.ID, allocatedStatus, allocatableProductObjects)
 					if err != nil {
 						// Handle the error
 					}
@@ -1157,7 +1157,7 @@ func convertUint8ToInt32(uint8Slice []uint8) []int32 {
 	return int32Slice
 }
 
-func (s *allocatorService) updateAllocationStatus(ctx context.Context, status string, productObjects []ProductObject) error {
+func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingProductID int, status string, productObjects []ProductObject) error {
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	fmt.Println("updateAllocationStatus")
@@ -1178,8 +1178,8 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, status st
 	}
 	fmt.Println(string(productObjectsJson))
 	for _, layout := range productObjects {
-		var bookingProductID int32
-		err = s.db.QueryRow("SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ?", layout.ID).Scan(&bookingProductID)
+		var bookingProductIdUpdated int
+		err = s.db.QueryRow("SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ?", layout.ID).Scan(&bookingProductIdUpdated)
 		if err != nil {
 			// If the row doesn't exist, insert a new row with the provided data
 			_, err = s.db.Exec("INSERT INTO booking_allocations (BookingProductID,MetaObjectID, Status, StatusTimes, LockedBy) VALUES (?,?, ?, ?, ?)", bookingProductID, layout.ID, "allocated", "[]", nil)
