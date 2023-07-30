@@ -629,7 +629,7 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 					}
 
 					fmt.Println(string(roomsByProductJson))
-					err = s.updateAllocationStatus(ctx, reservation.ID, item.Product.ID, "allocated", roomsByProduct)
+					err = s.updateAllocationStatus(ctx, "allocated", roomsByProduct)
 					if err != nil {
 						return nil, err
 					}
@@ -1115,7 +1115,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 				fmt.Println(len(allocatableProductObjects))
 				if len(allocatableProductObjects) > 0 {
 					fmt.Println("InCheck")
-					err := s.updateAllocationStatus(ctx, item.ID, item.Product.ID, allocatedStatus, allocatableProductObjects)
+					err := s.updateAllocationStatus(ctx, allocatedStatus, allocatableProductObjects)
 					if err != nil {
 						// Handle the error
 					}
@@ -1157,19 +1157,19 @@ func convertUint8ToInt32(uint8Slice []uint8) []int32 {
 	return int32Slice
 }
 
-func (s *allocatorService) updateAllocationStatus(ctx context.Context, reservationID int, bookingProductID string, status string, productObjects []ProductObject) error {
+func (s *allocatorService) updateAllocationStatus(ctx context.Context, status string, productObjects []ProductObject) error {
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	fmt.Println("updateAllocationStatus")
-	fmt.Printf("Value is: %d and type is 33: %T\\n", bookingProductID)
-	bookingProductIDResults := bookingProductID
+	/*	fmt.Printf("Value is: %d and type is 33: %T\\n", bookingProductID)
+		bookingProductIDResults := bookingProductID*/
 	fmt.Println("Json098=>")
-	bookingProductIDJson, err := json.Marshal(bookingProductIDResults)
-	if err != nil {
-		logger.Error("failed to marshal user to JSON", zap.Error(err))
-	}
+	/*	bookingProductIDJson, err := json.Marshal(bookingProductIDResults)
+		if err != nil {
+			logger.Error("failed to marshal user to JSON", zap.Error(err))
+		}
 
-	fmt.Println(string(bookingProductIDJson))
+		fmt.Println(string(bookingProductIDJson))*/
 
 	fmt.Println("Json099=>")
 	productObjectsJson, err := json.Marshal(productObjects)
@@ -1182,7 +1182,7 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, reservati
 		err = s.db.QueryRow("SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ?", layout.ID).Scan(&bookingProductID)
 		if err != nil {
 			// If the row doesn't exist, insert a new row with the provided data
-			_, err = s.db.Exec("INSERT INTO booking_allocations (BookingProductID,MetaObjectID, Status, StatusTimes, LockedBy) VALUES (?,?, ?, ?, ?)", reservationID, layout.ID, "allocated", "[]", nil)
+			_, err = s.db.Exec("INSERT INTO booking_allocations (BookingProductID,MetaObjectID, Status, StatusTimes, LockedBy) VALUES (?,?, ?, ?, ?)", bookingProductID, layout.ID, "allocated", "[]", nil)
 			if err != nil {
 				return fmt.Errorf("failed to update allocation status: %w", err)
 			}
