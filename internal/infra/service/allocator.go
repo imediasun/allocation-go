@@ -982,12 +982,12 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	query.WriteString("SELECT DISTINCT MAX(po.ID) FROM product_objects AS po ")
 	query.WriteString("INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND ")
 	query.WriteString("poProductID.Value IN (")
-	for i, productID := range productObjectCriteria.ProductIDs {
+	for i := range productObjectCriteria.ProductIDs {
 		if i > 0 {
 			query.WriteString(", ")
 		}
 		query.WriteString("?")
-		params = append(params, productID)
+		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 	query.WriteString(") ")
 	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' ")
@@ -999,19 +999,20 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	query.WriteString("INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID ")
 	query.WriteString("LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
 	query.WriteString("WHERE bi.ProductID IN (")
-	for i, productID := range productObjectCriteria.ProductIDs {
+	for i := range productObjectCriteria.ProductIDs {
 		if i > 0 {
 			query.WriteString(", ")
 		}
 		query.WriteString("?")
-		params = append(params, productID)
+		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 	query.WriteString(") ")
 	query.WriteString("AND bi.ProductType = 'room' ")
-	query.WriteString("AND bg.EndDate - INTERVAL 1 DAY >= DATE(?) ")
-	query.WriteString("AND bg.StartDate <= DATE(?) - INTERVAL 1 DAY)")
+	query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(?) ")
+	query.WriteString("AND DATE(bg.StartDate) <= DATE(?) - INTERVAL 1 DAY)")
 
-	params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
+	params = append(params, productObjectCriteria.PeriodStart.Format("2006-01-02"), productObjectCriteria.PeriodEnd.Format("2006-01-02"))
+	params = append(params, productObjectCriteria.PeriodStart.Format("2006-01-02"), productObjectCriteria.PeriodEnd.Format("2006-01-02"))
 
 	return query.String(), params
 }
