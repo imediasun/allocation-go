@@ -10,3 +10,5 @@ Build image:
   image: registry.werf.io/werf/werf
   script:
     - werf build --repo gitlab.hotel.tools:5050/${CI_PROJECT_PATH} --add-custom-tag "%image%-latest"
+  tags:
+    - "werf"
