@@ -976,34 +976,44 @@ func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, 
 }
 
 func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interface{}) {
-	// Create placeholders for ProductIDs
-	placeholders := make([]string, len(productObjectCriteria.ProductIDs))
-	values := make([]interface{}, len(productObjectCriteria.ProductIDs))
+	var query strings.Builder
+	var params []interface{}
 
-	for i, id := range productObjectCriteria.ProductIDs {
-		placeholders[i] = "?"
-		values[i] = id
-		fmt.Printf("Value is: %d and type is 44: %T\\n", id)
+	query.WriteString("SELECT DISTINCT MAX(po.ID) FROM product_objects AS po ")
+	query.WriteString("INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND ")
+	query.WriteString("poProductID.Value IN (")
+	for i, productID := range productObjectCriteria.ProductIDs {
+		if i > 0 {
+			query.WriteString(", ")
+		}
+		query.WriteString("?")
+		params = append(params, productID)
 	}
+	query.WriteString(") ")
+	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' ")
+	query.WriteString("WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID ")
+	query.WriteString("FROM product_object_statuses AS pos ")
+	query.WriteString("WHERE pos.Status IN ('out_of_order', 'out_of_service') ")
+	query.WriteString("AND Date BETWEEN DATE(?) AND DATE(?) - INTERVAL 1 DAY) ")
+	query.WriteString("AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg ")
+	query.WriteString("INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID ")
+	query.WriteString("LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
+	query.WriteString("WHERE bi.ProductID IN (")
+	for i, productID := range productObjectCriteria.ProductIDs {
+		if i > 0 {
+			query.WriteString(", ")
+		}
+		query.WriteString("?")
+		params = append(params, productID)
+	}
+	query.WriteString(") ")
+	query.WriteString("AND bi.ProductType = 'room' ")
+	query.WriteString("AND bg.EndDate - INTERVAL 1 DAY >= DATE(?) ")
+	query.WriteString("AND bg.StartDate <= DATE(?) - INTERVAL 1 DAY)")
 
-	// Create the WHERE clause for ProductIDs
-	whereProductIDs := fmt.Sprintf("`Key`='product_id' AND `Value` IN (%s)", strings.Join(placeholders, ","))
+	params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
 
-	// Create the WHERE clause for Date range
-	whereDateRange := fmt.Sprintf("pos.Date BETWEEN ? AND ?")
-
-	// Combine all the WHERE clauses
-	where := fmt.Sprintf("%s AND %s AND pos.Status = 'available'", whereProductIDs, whereDateRange)
-
-	// Create the full SQL query
-	query := fmt.Sprintf("SELECT DISTINCT ID FROM product_objects AS po LEFT JOIN product_object_statuses AS pos ON pos.MetaObjectID = po.ID WHERE %s", where)
-
-	fmt.Printf("Query IS: %d AlocatableProductObjects: %T\\n", query)
-
-	// Create the list of parameters for the SQL query
-	params := append(values, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
-
-	return query, params
+	return query.String(), params
 }
 
 func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, criteria ProductObjectCriteria) ([]ProductObject, error) {
@@ -1074,8 +1084,12 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 
 			fmt.Printf("Value is: %d and type is item.Product.ProductType: %T\\n", item.Product.ProductType)
 			fmt.Printf("Value is: %d and type is ProductID: %T\\n", item.Product.ID)
-			//Здесь ProductID должен прилетать ввиде строки типа p.56fa2a0e51daf
-			if item.Type == "product" && item.Product.ProductType == "room" {
+			isAllocatedObject, err := s.getAllocatedObject(item.ID)
+			if err != nil {
+				logger.Error("failed on getting AllocatedObject", zap.Error(err))
+			}
+			if item.Type == "product" && item.Product.ProductType == "room" &&
+				!isAllocatedObject {
 				fmt.Println("Point")
 
 				product = item.Product
