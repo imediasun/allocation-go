@@ -1194,7 +1194,7 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingPr
 		} else {
 			fmt.Printf("UPDATE_CRITERIA: %d layout.ID: %T\\n", layout.ID)
 			// If the row already exists, update it with the provided data
-			_, err = s.db.Exec("UPDATE booking_allocations SET Status = ?, StatusTimes = ?, LockedBy = ? WHERE MetaObjectID = ?", "allocated", "[]", nil, layout.ID)
+			_, err = s.db.Exec("UPDATE booking_allocations SET BookingProductID = ?, Status = ?, StatusTimes = ?, LockedBy = ? WHERE MetaObjectID = ?", bookingProductID, "allocated", "[]", nil, layout.ID)
 			if err != nil {
 				return fmt.Errorf("failed to update allocation status: %w", err)
 			}
