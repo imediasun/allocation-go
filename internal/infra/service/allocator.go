@@ -990,16 +990,13 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 
-	startDate := time.Date(productObjectCriteria.PeriodStart.Year(), productObjectCriteria.PeriodStart.Month(), productObjectCriteria.PeriodStart.Day(), 0, 0, 0, 0, productObjectCriteria.PeriodStart.Location())
-	endDate := time.Date(productObjectCriteria.PeriodEnd.Year(), productObjectCriteria.PeriodEnd.Month(), productObjectCriteria.PeriodEnd.Day(), 0, 0, 0, 0, productObjectCriteria.PeriodEnd.Location())
-
-	params = append(params, startDate, endDate)
+	params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
 	query.WriteString(") ")
 	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' ")
 	query.WriteString("WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID ")
 	query.WriteString("FROM product_object_statuses AS pos ")
 	query.WriteString("WHERE pos.Status IN ('out_of_order', 'out_of_service') ")
-	query.WriteString("AND Date BETWEEN DATE(?) AND DATE(?) - INTERVAL 1 DAY) ")
+	query.WriteString("AND Date BETWEEN ? AND DATE_ADD(?, INTERVAL -1 DAY) ")
 
 	query.WriteString("AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg ")
 	query.WriteString("INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID ")
@@ -1014,10 +1011,10 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	}
 	query.WriteString(") ")
 	query.WriteString("AND bi.ProductType = 'room' ")
-	query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(?) ")
-	query.WriteString("AND DATE(bg.StartDate) <= DATE(?) - INTERVAL 1 DAY)")
+	query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= ? ")
+	query.WriteString("AND DATE(bg.StartDate) <= DATE_ADD(?, INTERVAL -1 DAY)")
 
-	params = append(params, startDate, endDate)
+	params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
 
 	return query.String(), params
 }
