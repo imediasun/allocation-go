@@ -21,7 +21,7 @@ RUN go build -o ./allocator ./cmd/allocator
 RUN chmod +x ./allocator
 
 # Clear the Go module cache before getting the packages
-RUN go clean -modcache
+#RUN go clean -modcache
 
 # Install our third-party application for hot-reloading capability.
 RUN go mod tidy
