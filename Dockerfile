@@ -14,25 +14,25 @@ RUN chmod 600 ~/.netrc
 COPY . /app
 WORKDIR /app
 
-COPY ./go.mod ./
-COPY ./go.sum ./
+#COPY ./go.mod ./
+#COPY ./go.sum ./
 RUN go mod download
 
 # Clear the Go module cache before getting the packages
-RUN go clean -modcache
+#RUN go clean -modcache
 
 # Copy only `.go` files, if you want all files to be copied then replace `with `COPY . .` for the code below.
-COPY . .
+#COPY . .
 
 EXPOSE 8080
+
+# Compile the application and make it executable
+RUN go build -o ./allocator ./cmd/allocator
+RUN chmod +x ./allocator
 
 # Install our third-party application for hot-reloading capability.
 RUN go mod tidy
 RUN go get github.com/githubnemo/CompileDaemon
 RUN go install github.com/githubnemo/CompileDaemon
-
-# Compile the application and make it executable
-RUN go build -o ./allocator ./cmd/allocator
-RUN chmod +x ./allocator
 
 ENTRYPOINT CompileDaemon -polling -log-prefix=false -build="go build -o ./allocator ./cmd/allocator" -command="./allocator" -directory="./"
