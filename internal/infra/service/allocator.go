@@ -979,7 +979,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	var query strings.Builder
 	var params []interface{}
 
-	query.WriteString("SELECT DISTINCT MAX(po.ID) FROM product_objects AS po ")
+	query.WriteString("SELECT DISTINCT po.ID FROM product_objects AS po ")
 	query.WriteString("INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND ")
 	query.WriteString("poProductID.Value IN (")
 	for i := range productObjectCriteria.ProductIDs {
