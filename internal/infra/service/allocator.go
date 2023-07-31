@@ -990,6 +990,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		query.WriteString("?")
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
+	params = append(params, productObjectCriteria.PeriodStart.Format("2006-01-02"), productObjectCriteria.PeriodEnd.Format("2006-01-02"))
 	query.WriteString(") ")
 	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' ")
 	query.WriteString("WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID ")
@@ -1014,7 +1015,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	query.WriteString("AND DATE(bg.StartDate) <= DATE(?) - INTERVAL 1 DAY)")
 
 	params = append(params, productObjectCriteria.PeriodStart.Format("2006-01-02"), productObjectCriteria.PeriodEnd.Format("2006-01-02"))
-	params = append(params, productObjectCriteria.PeriodStart.Format("2006-01-02"), productObjectCriteria.PeriodEnd.Format("2006-01-02"))
+
 	return query.String(), params
 }
 
