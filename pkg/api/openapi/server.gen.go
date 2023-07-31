@@ -90,11 +90,18 @@ func (w *ServerInterfaceWrapper) AutoAllocate(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid request body: %s", err))
 	}
 	fmt.Println("Test2")
-	fmt.Printf("Value is: %d and type IS requestBody  is: %T\\n", requestBody.ReservationID)
+	fmt.Printf("Value is: %d and type IS requestBody is: %T\n", requestBody.ReservationID)
 	// Invoke the callback with the unmarshalled arguments
 	err = w.Handler.AutoAllocate(ctx, requestBody.ReservationID, true)
-	return err
+	if err != nil {
+		// Handle the error and return an appropriate response status code
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to auto-allocate: %s", err))
+	}
+
+	// Return a success response status code
+	return ctx.JSON(http.StatusOK, "Auto-allocation successful")
 }
+
 
 // DeletePet converts echo context to params.
 func (w *ServerInterfaceWrapper) DeletePet(ctx echo.Context) error {
