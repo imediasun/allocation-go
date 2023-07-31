@@ -990,14 +990,8 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 
-	startDate, err := time.Parse("2006-01-02", productObjectCriteria.PeriodStart.Format("2006-01-02"))
-	if err != nil {
-		// Handle the error if needed
-	}
-	endDate, err := time.Parse("2006-01-02", productObjectCriteria.PeriodEnd.Format("2006-01-02"))
-	if err != nil {
-		// Handle the error if needed
-	}
+	startDate := time.Date(productObjectCriteria.PeriodStart.Year(), productObjectCriteria.PeriodStart.Month(), productObjectCriteria.PeriodStart.Day(), 0, 0, 0, 0, productObjectCriteria.PeriodStart.Location())
+	endDate := time.Date(productObjectCriteria.PeriodEnd.Year(), productObjectCriteria.PeriodEnd.Month(), productObjectCriteria.PeriodEnd.Day(), 0, 0, 0, 0, productObjectCriteria.PeriodEnd.Location())
 
 	params = append(params, startDate, endDate)
 	query.WriteString(") ")
