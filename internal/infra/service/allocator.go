@@ -1013,7 +1013,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	mysqlDateFormatPeriodStart := productObjectCriteria.PeriodStart.Format("2006-01-02")
 	mysqlDateFormatPeriodEnd := productObjectCriteria.PeriodEnd.Format("2006-01-02")
 
-	query.WriteString("SELECT DISTINCT po.ID FROM product_objects AS po    INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND poProductID.Value IN (")
+	query.WriteString("SELECT DISTINCT MAX(po.ID) FROM product_objects AS po    INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND poProductID.Value IN (")
 
 	for i := range productObjectCriteria.ProductIDs {
 		if i > 0 {
@@ -1024,7 +1024,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	}
 	query.WriteString(") ")
 	//params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
-	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID FROM product_object_statuses AS pos WHERE pos.Status IN ('out_of_order', 'out_of_service') AND Date BETWEEN DATE(2023-07-31) AND DATE(2023-08-01) - INTERVAL 1 DAY) AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg    INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
+	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID FROM product_object_statuses AS pos WHERE pos.Status IN ('out_of_order', 'out_of_service') AND Date BETWEEN DATE(%s) AND DATE(%s) - INTERVAL 1 DAY) AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg    INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
 	query.WriteString(" WHERE bi.ProductID IN (")
 	for i := range productObjectCriteria.ProductIDs {
 		if i > 0 {
@@ -1037,7 +1037,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	//params = append(params, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
 	query.WriteString(" AND bi.ProductType = 'room' AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(%s) AND DATE(bg.StartDate) <= DATE(%s) - INTERVAL 1 DAY);")
 
-	result := fmt.Sprintf(query.String(), mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
+	result := fmt.Sprintf(query.String(), mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
 
 	return result, params
 }
