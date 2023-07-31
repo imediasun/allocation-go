@@ -864,8 +864,8 @@ type Product struct {
 }
 
 type ProductObject struct {
-	ID     string `db:"id"`
-	RoomID int32  `db:"room_id"`
+	ID     null.String `db:"id"`
+	RoomID int32       `db:"room_id"`
 	// Другие поля объекта продукта
 }
 
@@ -1026,18 +1026,19 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, c
 
 	rows, err := s.db.Query(query, params...)
 	if err != nil {
-		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		logger.Error("failed to fetch data from MYSQL", zap.Error(err))
 		return nil, err
 	}
 	defer rows.Close()
 
 	var allocatableProductObjects []ProductObject
+	fmt.Printf("Rows is: %d and type is row to sql: %T\\n", rows)
 	for rows.Next() {
 		var productObject ProductObject
 
 		err := rows.Scan(&productObject.ID)
 		if err != nil {
-			logger.Error("failed to marshal user to JSON", zap.Error(err))
+			logger.Error("failed to Scan", zap.Error(err))
 			return nil, err
 		}
 
