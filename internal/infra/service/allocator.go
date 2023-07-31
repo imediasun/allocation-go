@@ -1181,7 +1181,7 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingPr
 	for _, layout := range productObjects {
 		var bookingProductIdUpdated int
 
-		err = s.db.QueryRow("SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ?", layout.ID).Scan(&bookingProductIdUpdated)
+		err = s.db.QueryRow("SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ? AND BookingProductID = ?", layout.ID, bookingProductID).Scan(&bookingProductIdUpdated)
 		fmt.Printf("SELECT_RESULT: %d bookingProductIdUpdated: %T\\n", bookingProductIdUpdated)
 		if err != nil {
 			fmt.Printf("INSERT_CRITERIA: %d bookingProductID: %T\\n", bookingProductID)
