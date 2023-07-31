@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/volatiletech/null/v8"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/db"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/log"
@@ -990,7 +989,17 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		query.WriteString("?")
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
-	params = append(params, productObjectCriteria.PeriodStart.Format("2006-01-02"), productObjectCriteria.PeriodEnd.Format("2006-01-02"))
+
+	startDate, err := time.Parse("2006-01-02", productObjectCriteria.PeriodStart.Format("2006-01-02"))
+	if err != nil {
+		// Handle the error if needed
+	}
+	endDate, err := time.Parse("2006-01-02", productObjectCriteria.PeriodEnd.Format("2006-01-02"))
+	if err != nil {
+		// Handle the error if needed
+	}
+
+	params = append(params, startDate, endDate)
 	query.WriteString(") ")
 	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' ")
 	query.WriteString("WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID ")
@@ -1014,7 +1023,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(?) ")
 	query.WriteString("AND DATE(bg.StartDate) <= DATE(?) - INTERVAL 1 DAY)")
 
-	params = append(params, productObjectCriteria.PeriodStart.Format("2006-01-02"), productObjectCriteria.PeriodEnd.Format("2006-01-02"))
+	params = append(params, startDate, endDate)
 
 	return query.String(), params
 }
@@ -1026,8 +1035,6 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, c
 	//fmt.Printf("Value is: %d and type is hashCriteria: %T\\n", hashCriteria)
 	query, params := buildQuery(criteria)
 	fmt.Println(query)
-	interpolatedQuery := spew.Sdump(query, params)
-	fmt.Printf("Interpolated Query: %s\n", interpolatedQuery)
 	rows, err := s.db.Query(query, params...)
 	if err != nil {
 		logger.Error("failed to fetch data from MYSQL", zap.Error(err))
