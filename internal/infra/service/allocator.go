@@ -1008,9 +1008,10 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		query.WriteString(") ")
 		query.WriteString("AND bi.ProductType = 'room' ")
 		query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= ? ")
-		query.WriteString("AND DATE(bg.StartDate) <= DATE_ADD(?, INTERVAL -1 DAY))")
+		query.WriteString("AND DATE(bg.StartDate) <= DATE_ADD(?, INTERVAL -1 DAY))")*/
 
-		params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)*/
+	mysqlDateFormat := productObjectCriteria.PeriodStart.Format("2006-01-02")
+
 	query.WriteString("SELECT DISTINCT po.ID FROM product_objects AS po    INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND poProductID.Value IN (")
 
 	for i := range productObjectCriteria.ProductIDs {
@@ -1032,7 +1033,8 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 	query.WriteString(") ")
-	query.WriteString(" AND bi.ProductType = 'room' AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(2023-07-31) AND DATE(bg.StartDate) <= DATE(2023-08-01) - INTERVAL 1 DAY);")
+	params = append(params, mysqlDateFormat, productObjectCriteria.PeriodEnd)
+	query.WriteString(" AND bi.ProductType = 'room' AND DATE(bg.EndDate) - INTERVAL 1 DAY >= (?) AND DATE(bg.StartDate) <= (?) - INTERVAL 1 DAY);")
 	return query.String(), params
 }
 
