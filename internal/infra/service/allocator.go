@@ -1008,7 +1008,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 	query.WriteString(") ")
-	query.WriteString("AND bi.ProductType = 'room' ")
+	query.WriteString("AND bi.ProductType = 'room'")
 	query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(?) ")
 	query.WriteString("AND DATE(bg.StartDate) <= DATE(?) - INTERVAL 1 DAY)")
 
@@ -1026,6 +1026,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, c
 
 	rows, err := s.db.Query(query, params...)
 	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
 		return nil, err
 	}
 	defer rows.Close()
@@ -1036,6 +1037,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, c
 
 		err := rows.Scan(&productObject.ID)
 		if err != nil {
+			logger.Error("failed to marshal user to JSON", zap.Error(err))
 			return nil, err
 		}
 
