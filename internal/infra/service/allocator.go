@@ -979,9 +979,40 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	var query strings.Builder
 	var params []interface{}
 
-	query.WriteString("SELECT MAX(po.ID) FROM product_objects AS po ")
-	query.WriteString("INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND ")
-	query.WriteString("poProductID.Value IN (")
+	/*	query.WriteString("SELECT MAX(po.ID) FROM product_objects AS po ")
+		query.WriteString("INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND ")
+		query.WriteString("poProductID.Value IN (")
+
+
+
+
+
+		query.WriteString(") ")
+		query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' ")
+		query.WriteString("WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID ")
+		query.WriteString("FROM product_object_statuses AS pos ")
+		query.WriteString("WHERE pos.Status IN ('out_of_order', 'out_of_service') ")
+		query.WriteString("AND Date BETWEEN ? AND DATE_ADD(?, INTERVAL -1 DAY)) ")
+
+		query.WriteString("AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg ")
+		query.WriteString("INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID ")
+		query.WriteString("LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
+		query.WriteString("WHERE bi.ProductID IN (")
+		for i := range productObjectCriteria.ProductIDs {
+			if i > 0 {
+				query.WriteString(", ")
+			}
+			query.WriteString("?")
+			params = append(params, productObjectCriteria.ProductIDs[i])
+		}
+		query.WriteString(") ")
+		query.WriteString("AND bi.ProductType = 'room' ")
+		query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= ? ")
+		query.WriteString("AND DATE(bg.StartDate) <= DATE_ADD(?, INTERVAL -1 DAY))")
+
+		params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)*/
+	query.WriteString("SELECT DISTINCT po.ID FROM product_objects AS po    INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND poProductID.Value IN (")
+
 	for i := range productObjectCriteria.ProductIDs {
 		if i > 0 {
 			query.WriteString(", ")
@@ -989,18 +1020,10 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		query.WriteString("?")
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
-	params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
 	query.WriteString(") ")
-	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' ")
-	query.WriteString("WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID ")
-	query.WriteString("FROM product_object_statuses AS pos ")
-	query.WriteString("WHERE pos.Status IN ('out_of_order', 'out_of_service') ")
-	query.WriteString("AND Date BETWEEN ? AND DATE_ADD(?, INTERVAL -1 DAY)) ")
-
-	query.WriteString("AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg ")
-	query.WriteString("INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID ")
-	query.WriteString("LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
-	query.WriteString("WHERE bi.ProductID IN (")
+	//params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
+	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID FROM product_object_statuses AS pos WHERE pos.Status IN ('out_of_order', 'out_of_service') AND Date BETWEEN DATE(2023-07-31) AND DATE(2023-08-01) - INTERVAL 1 DAY) AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg    INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
+	query.WriteString(" WHERE bi.ProductID IN (")
 	for i := range productObjectCriteria.ProductIDs {
 		if i > 0 {
 			query.WriteString(", ")
@@ -1009,12 +1032,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 	query.WriteString(") ")
-	query.WriteString("AND bi.ProductType = 'room' ")
-	query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= ? ")
-	query.WriteString("AND DATE(bg.StartDate) <= DATE_ADD(?, INTERVAL -1 DAY))")
-
-	params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
-
+	query.WriteString(" AND bi.ProductType = 'room' AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(2023-07-31) AND DATE(bg.StartDate) <= DATE(2023-08-01) - INTERVAL 1 DAY);")
 	return query.String(), params
 }
 
