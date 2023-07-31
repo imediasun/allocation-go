@@ -1008,7 +1008,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 	query.WriteString(") ")
-	query.WriteString("AND bi.ProductType = 'room'")
+	query.WriteString("AND bi.ProductType = 'room' ")
 	query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(?) ")
 	query.WriteString("AND DATE(bg.StartDate) <= DATE(?) - INTERVAL 1 DAY)")
 
