@@ -864,8 +864,8 @@ type Product struct {
 }
 
 type ProductObject struct {
-	ID     null.String `db:"id"`
-	RoomID int32       `db:"room_id"`
+	ID     string `db:"id"`
+	RoomID int32  `db:"room_id"`
 	// Другие поля объекта продукта
 }
 
