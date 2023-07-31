@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/volatiletech/null/v8"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/db"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/log"
@@ -1020,10 +1021,12 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, criteria ProductObjectCriteria) ([]ProductObject, error) {
 	//hashCriteria := criteria.Hash()
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
+
 	//fmt.Printf("Value is: %d and type is hashCriteria: %T\\n", hashCriteria)
 	query, params := buildQuery(criteria)
 	fmt.Println(query)
-
+	interpolatedQuery := spew.Sdump(query, params)
+	fmt.Printf("Interpolated Query: %s\n", interpolatedQuery)
 	rows, err := s.db.Query(query, params...)
 	if err != nil {
 		logger.Error("failed to fetch data from MYSQL", zap.Error(err))
@@ -1032,7 +1035,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, c
 	defer rows.Close()
 
 	var allocatableProductObjects []ProductObject
-	fmt.Printf("Rows is: %d and type is row to sql: %T\\n", rows)
+
 	for rows.Next() {
 		var productObject ProductObject
 
