@@ -1035,7 +1035,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 	}
 	query.WriteString(") ")
 	params = append(params, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
-	query.WriteString(" AND bi.ProductType = 'room' AND DATE(bg.EndDate) - INTERVAL 1 DAY >= (?) AND DATE(bg.StartDate) <= (?) - INTERVAL 1 DAY);")
+	query.WriteString(" AND bi.ProductType = 'room' AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(?) AND DATE(bg.StartDate) <= DATE(?) - INTERVAL 1 DAY);")
 	return query.String(), params
 }
 
