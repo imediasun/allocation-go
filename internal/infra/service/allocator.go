@@ -828,7 +828,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 	// Execute the query with the interfaceIDs as separate parameters
 	rows, err := s.db.Query(productObjectsQuery, productObjectsInterfaceIDs...)
 	if err != nil {
-
+		return nil, err
 	}
 	defer rows.Close()
 	var metaObjectsList []string
