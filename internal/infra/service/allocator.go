@@ -506,7 +506,7 @@ func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int3
 	fmt.Printf("Value is: %d and type is productObjectCriteria: %T\\n", productObjectCriteria)
 
 	// Fetch the ProductObjects from the database using the criteria
-	productObjects, err := s.fetchAllocatableProductObjects(ctx, productObjectCriteria)
+	productObjects, err := s.fetchAllocatableProductObjects(ctx, productEntity.ID, productObjectCriteria)
 	if err != nil {
 		return nil, err
 	}
@@ -863,6 +863,10 @@ type Product struct {
 	ProductType string `db:"product_type"`
 }
 
+type MetaObjects struct {
+	MetaObjectID string `db:"MetaObjectID"`
+	// Другие поля объекта продукта
+}
 type ProductObject struct {
 	ID     string `db:"id"`
 	RoomID int32  `db:"room_id"`
@@ -975,45 +979,14 @@ func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, 
 
 }
 
-func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interface{}) {
+/*func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interface{}) {
 	var query strings.Builder
 	var params []interface{}
-
-	/*	query.WriteString("SELECT MAX(po.ID) FROM product_objects AS po ")
-		query.WriteString("INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND ")
-		query.WriteString("poProductID.Value IN (")
-
-
-
-
-
-		query.WriteString(") ")
-		query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' ")
-		query.WriteString("WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID ")
-		query.WriteString("FROM product_object_statuses AS pos ")
-		query.WriteString("WHERE pos.Status IN ('out_of_order', 'out_of_service') ")
-		query.WriteString("AND Date BETWEEN ? AND DATE_ADD(?, INTERVAL -1 DAY)) ")
-
-		query.WriteString("AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg ")
-		query.WriteString("INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID ")
-		query.WriteString("LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
-		query.WriteString("WHERE bi.ProductID IN (")
-		for i := range productObjectCriteria.ProductIDs {
-			if i > 0 {
-				query.WriteString(", ")
-			}
-			query.WriteString("?")
-			params = append(params, productObjectCriteria.ProductIDs[i])
-		}
-		query.WriteString(") ")
-		query.WriteString("AND bi.ProductType = 'room' ")
-		query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= ? ")
-		query.WriteString("AND DATE(bg.StartDate) <= DATE_ADD(?, INTERVAL -1 DAY))")*/
 
 	mysqlDateFormatPeriodStart := productObjectCriteria.PeriodStart.Format("2006-01-02")
 	mysqlDateFormatPeriodEnd := productObjectCriteria.PeriodEnd.Format("2006-01-02")
 
-	query.WriteString("SELECT DISTINCT MAX(po.ID) FROM product_objects AS po    INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND poProductID.Value IN (")
+	query.WriteString("SELECT DISTINCT po.ID FROM product_objects AS po    INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND poProductID.Value IN (")
 
 	for i := range productObjectCriteria.ProductIDs {
 		if i > 0 {
@@ -1023,7 +996,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 	query.WriteString(") ")
-	//params = append(params, productObjectCriteria.PeriodStart, productObjectCriteria.PeriodEnd)
+
 	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID FROM product_object_statuses AS pos WHERE pos.Status IN ('out_of_order', 'out_of_service') AND Date BETWEEN DATE(%s) AND DATE(%s) - INTERVAL 1 DAY) AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg    INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
 	query.WriteString(" WHERE bi.ProductID IN (")
 	for i := range productObjectCriteria.ProductIDs {
@@ -1034,27 +1007,127 @@ func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interfac
 		params = append(params, productObjectCriteria.ProductIDs[i])
 	}
 	query.WriteString(") ")
-	//params = append(params, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
 	query.WriteString(" AND bi.ProductType = 'room' AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(%s) AND DATE(bg.StartDate) <= DATE(%s) - INTERVAL 1 DAY);")
 
 	result := fmt.Sprintf(query.String(), mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
 
 	return result, params
-}
+}*/
 
-func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, criteria ProductObjectCriteria) ([]ProductObject, error) {
-	//hashCriteria := criteria.Hash()
+func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, bookingProductID string, criteria ProductObjectCriteria) ([]ProductObject, error) {
+
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
-
+	var bookingProductIDs []string
+	bookingProductIDs = append(bookingProductIDs, bookingProductID)
 	//fmt.Printf("Value is: %d and type is hashCriteria: %T\\n", hashCriteria)
-	query, params := buildQuery(criteria)
-	fmt.Println(query)
-	rows, err := s.db.Query(query, params...)
+	//query, params := buildQuery(criteria)
+
+	mysqlDateFormatPeriodStart := criteria.PeriodStart.Format("2006-01-02")
+	mysqlDateFormatPeriodEnd := criteria.PeriodEnd.Format("2006-01-02")
+
+	productIds := bookingProductIDs
+	productIdsPlaceholders := make([]string, len(productIds))
+	for i := range productIdsPlaceholders {
+		productIdsPlaceholders[i] = "?"
+	}
+
+	productObjectsQuery := fmt.Sprintf("DISTINCT po.ID FROM product_objects AS po INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active'  INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' WHERE poActive.Value = '1' AND poProductID.Value IN  (%s)", strings.Join(productIdsPlaceholders, ","))
+	var productObjectsInterfaceIDs []interface{}
+	for _, id := range productIds {
+		productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	rows, err := s.db.Query(productObjectsQuery, productObjectsInterfaceIDs...)
+	if err != nil {
+
+	}
+	defer rows.Close()
+	var metaObjectsList []string
+	for rows.Next() {
+		var productObject ProductObject
+		err := rows.Scan(
+			&productObject.ID,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		metaObjectsList = append(metaObjectsList, productObject.ID)
+	}
+
+	ids := metaObjectsList
+	availableMetaObjectsPlaceholders := make([]string, len(ids))
+	for i := range availableMetaObjectsPlaceholders {
+		availableMetaObjectsPlaceholders[i] = "?"
+	}
+
+	availableMetaObjectsQuery := fmt.Sprintf("SELECT DISTINCT MetaObjectID AS ID FROM product_object_statuses WHERE Date BETWEEN DATE(%s) AND DATE(%s) - INTERVAL 1 DAY AND NOT Status IN ('available') AND MetaObjectID IN (%s)", mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, strings.Join(availableMetaObjectsPlaceholders, ","))
+	var interfaceIDs []interface{}
+	for _, id := range metaObjectsList {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+
+	// Execute the query with the interfaceIDs as separate parameters
+	availableMetaObjectsRows, err := s.db.Query(availableMetaObjectsQuery, interfaceIDs...)
+	if err != nil {
+
+	}
+	defer availableMetaObjectsRows.Close()
+	var availableMetaObjectsList []string
+	for availableMetaObjectsRows.Next() {
+		var availableMetaObjects MetaObjects
+		err := rows.Scan(
+			&availableMetaObjects.MetaObjectID,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		availableMetaObjectsList = append(availableMetaObjectsList, availableMetaObjects.MetaObjectID)
+	}
+	probalyAocatedPlaceholders := make([]string, len(ids))
+	for i := range probalyAocatedPlaceholders {
+		probalyAocatedPlaceholders[i] = "?"
+	}
+	probalyAocatedMetaObjectsQuery := fmt.Sprintf("SELECT DISTINCT ba.MetaObjectID AS ID FROM booking_allocations AS ba INNER JOIN booking_items AS bi ON ba.BookingProductID = bi.ID  INNER JOIN booking_groups AS bg ON bi.GroupID = bg.ID WHERE DATE(bg.EndDate) > DATE( %s ) AND DATE(bg.StartDate) < DATE( %s ) AND ba.MetaObjectID IN (%s)", mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, strings.Join(probalyAocatedPlaceholders, ","))
+	var probalyAocatedInterfaceIDs []interface{}
+	for _, id := range availableMetaObjectsList {
+		probalyAocatedInterfaceIDs = append(probalyAocatedInterfaceIDs, id)
+	}
+	// Execute the query with the interfaceIDs as separate parameters
+	probalyAocatedRows, err := s.db.Query(probalyAocatedMetaObjectsQuery, probalyAocatedInterfaceIDs...)
+	if err != nil {
+
+	}
+	defer probalyAocatedRows.Close()
+	var probalyAocatedMetaObjectsList []string
+	for probalyAocatedRows.Next() {
+		var probalyAocatedMetaObjects MetaObjects
+		err := rows.Scan(
+			&probalyAocatedMetaObjects.MetaObjectID,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		probalyAocatedMetaObjectsList = append(probalyAocatedMetaObjectsList, probalyAocatedMetaObjects.MetaObjectID)
+	}
+	toFilterPlaceholders := make([]string, len(probalyAocatedMetaObjectsList))
+	for i := range toFilterPlaceholders {
+		toFilterPlaceholders[i] = "?"
+	}
+	var toFilterInterfaceIDs []interface{}
+	for _, id := range probalyAocatedMetaObjectsList {
+		toFilterInterfaceIDs = append(toFilterInterfaceIDs, id)
+	}
+	toFilterQuery := fmt.Sprintf("SELECT DISTINCT ID FROM product_objects WHERE ID IN (%s)", strings.Join(toFilterPlaceholders, ","))
+	toFilterRows, err := s.db.Query(toFilterQuery, toFilterInterfaceIDs...)
 	if err != nil {
 		logger.Error("failed to fetch data from MYSQL", zap.Error(err))
 		return nil, err
 	}
-	defer rows.Close()
+	defer toFilterRows.Close()
 
 	var allocatableProductObjects []ProductObject
 
@@ -1134,7 +1207,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 				fmt.Printf("Value is: %d and type is productObjectCriteria2: %T\\n", productObjectCriteria)
 
 				// Fetch allocatable product objects using criteria
-				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, productObjectCriteria)
+				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, item.Product.ID, productObjectCriteria)
 				if err != nil {
 					// Handle the error
 				}
@@ -1153,29 +1226,6 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 		}
 	}
 }
-
-/*func (s *allocatorService) allocateRoom(bookingProductID string) (bool, error) {
-	// Construct the SQL query
-	var productObject ProductObject
-	metaObjectQuery := "SELECT * FROM product_objects as po WHERE po.Key='product_id' AND Value= ? "
-	err := s.db.QueryRow(metaObjectQuery, bookingProductID).Scan(
-		&productObject.ID,
-	)
-
-	if err != nil {
-		return false, fmt.Errorf("failed to get metObjct: %w", err)
-	}
-
-	query := "INSERT INTO booking_allocations (BookingProductID, MetaObjectID, Status, StatusTimes, LockedBy) VALUES (?, ?, 'allocated', '[]', NULL) ON DUPLICATE KEY UPDATE MetaObjectID = VALUES(`MetaObjectID`), Status = VALUES(`Status`), StatusTimes = VALUES(`StatusTimes`), LockedBy = VALUES(`LockedBy`)"
-
-	// Execute the SQL query with the provided parameters
-	_, err = s.db.Exec(query, bookingProductID, productObject.ID)
-	if err != nil {
-		return false, fmt.Errorf("failed to update allocation status: %w", err)
-	}
-
-	return true, nil
-}*/
 
 func convertUint8ToInt32(uint8Slice []uint8) []int32 {
 	int32Slice := make([]int32, len(uint8Slice))
@@ -1213,7 +1263,6 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingPr
 		fmt.Printf("SELECT_RESULT: %d bookingProductIdUpdated: %T\\n", bookingProductIdUpdated)
 		if err != nil {
 			fmt.Printf("INSERT_CRITERIA: %d bookingProductID: %T\\n", bookingProductID)
-			// If the row doesn't exist, insert a new row with the provided data
 			_, err = s.db.Exec("INSERT INTO booking_allocations (BookingProductID,MetaObjectID, Status, StatusTimes, LockedBy) VALUES (?,?, ?, ?, ?)", bookingProductID, layout.ID, "allocated", "[]", nil)
 			if err != nil {
 				return fmt.Errorf("failed to update allocation status: %w", err)
@@ -1221,7 +1270,6 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingPr
 			fmt.Println("New row inserted successfully!")
 		} else {
 			fmt.Printf("UPDATE_CRITERIA: %d layout.ID: %T\\n", layout.ID)
-			// If the row already exists, update it with the provided data
 			_, err = s.db.Exec("UPDATE booking_allocations SET BookingProductID = ?, Status = ?, StatusTimes = ?, LockedBy = ? WHERE MetaObjectID = ?", bookingProductID, "allocated", "[]", nil, layout.ID)
 			if err != nil {
 				return fmt.Errorf("failed to update allocation status: %w", err)
