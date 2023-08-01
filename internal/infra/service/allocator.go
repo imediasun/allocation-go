@@ -817,7 +817,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 		productIdsPlaceholders[i] = "?"
 	}
 
-	productObjectsQuery := fmt.Sprintf("DISTINCT po.ID FROM product_objects AS po INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active'  INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' WHERE poActive.Value = '1' AND poProductID.Value IN  (%s)", strings.Join(productIdsPlaceholders, ","))
+	productObjectsQuery := fmt.Sprintf("SELECT DISTINCT po.ID FROM product_objects AS po INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active'  INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' WHERE poActive.Value = '1' AND poProductID.Value IN  (%s)", strings.Join(productIdsPlaceholders, ","))
 
 	var productObjectsInterfaceIDs []interface{}
 	for _, id := range bookingProductIDs {
