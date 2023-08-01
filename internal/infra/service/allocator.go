@@ -429,7 +429,7 @@ func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int3
 	fmt.Printf("Value is: %d and type is productObjectCriteria: %T\\n", productObjectCriteria)
 
 	// Fetch the ProductObjects from the database using the criteria
-	productObjects, err := s.fetchAllocatableProductObjects(ctx, productEntity.ID, productObjectCriteria)
+	productObjects, err := s.fetchAllocatableProductObjects(ctx, productIDs, productObjectCriteria)
 	if err != nil {
 		return nil, err
 	}
@@ -802,11 +802,9 @@ func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, 
 
 }
 
-func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, bookingProductID string, criteria ProductObjectCriteria) ([]ProductObject, error) {
+func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, bookingProductIDs []string, criteria ProductObjectCriteria) ([]ProductObject, error) {
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
-	var bookingProductIDs []string
-	bookingProductIDs = append(bookingProductIDs, bookingProductID)
 	//fmt.Printf("Value is: %d and type is hashCriteria: %T\\n", hashCriteria)
 	//query, params := buildQuery(criteria)
 
@@ -995,7 +993,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 				fmt.Printf("Value is: %d and type is productObjectCriteria2: %T\\n", productObjectCriteria)
 
 				// Fetch allocatable product objects using criteria
-				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, item.Product.ID, productObjectCriteria)
+				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{item.Product.ID}, productObjectCriteria)
 				if err != nil {
 					// Handle the error
 				}
