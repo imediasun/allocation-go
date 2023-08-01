@@ -818,12 +818,14 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 	}
 
 	productObjectsQuery := fmt.Sprintf("DISTINCT po.ID FROM product_objects AS po INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active'  INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' WHERE poActive.Value = '1' AND poProductID.Value IN  (%s)", strings.Join(productIdsPlaceholders, ","))
-	productObjectsInterfaceIDs := make([]interface{}, len(bookingProductIDs))
-	for i, id := range bookingProductIDs {
-		fmt.Printf("Value is: %d productObjectsInterfaceIDs: %T\\n", id[0])
-		productObjectsInterfaceIDs[i] = id[0]
-		fmt.Printf("Value is: %d productObjectsInterfaceIDs2: %T\\n", productObjectsInterfaceIDs[i])
-		fmt.Printf("Value is: %d productObjectsInterfaceIDs3: %T\\n", id[i])
+
+	var productObjectsInterfaceIDs []interface{}
+	for _, id := range bookingProductIDs {
+		fmt.Printf("Value is: %d productObjectsInterfaceIDs: %T\\n", id)
+		fmt.Printf("Value is: %d productObjectsInterfaceIDs2: %T\\n", productObjectsInterfaceIDs)
+		fmt.Printf("Value is: %d productObjectsInterfaceIDs3: %T\\n", id)
+		productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, id)
+		fmt.Printf("Value is: %d productObjectsInterfaceIDs4: %T\\n", productObjectsInterfaceIDs)
 	}
 
 	// Execute the query with the interfaceIDs as separate parameters
@@ -996,7 +998,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 				fmt.Printf("Value is: %d and type is productObjectCriteria2: %T\\n", productObjectCriteria)
 
 				// Fetch allocatable product objects using criteria
-				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{item.Product.ID}, productObjectCriteria)
+				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{product.ID}, productObjectCriteria)
 				if err != nil {
 					// Handle the error
 				}
