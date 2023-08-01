@@ -2,16 +2,13 @@ package model
 
 import (
 	"github.com/volatiletech/null/v8"
-	"time"
 )
 
-type ReservationGroup struct {
-	Item           BookingItems
-	ID             int32
-	BookingID      int32
-	PaxNationality string
-	StartDate      time.Time
-	EndDate        time.Time
-	ParentID       null.Int64
-	Items          []BookingItems
+type BookingItems struct {
+	ID        int         `db:"id"`
+	Type      string      `db:"Type"`
+	VenueID   int32       `db:"VenueID"`
+	ProductID null.String `db:"ProductID"`
+	Status    string      `db:"Status"`
+	Product   Product
 }

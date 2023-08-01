@@ -1,6 +1,7 @@
 package model
 
-type Money struct {
-	Amount   float64
-	Currency string
+type Product struct {
+	ID          string
+	Status      string
+	ProductType string `db:"product_type"`
 }
