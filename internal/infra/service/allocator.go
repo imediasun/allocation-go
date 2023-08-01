@@ -847,6 +847,14 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 		metaObjectsList = append(metaObjectsList, productObject.ID)
 	}
 
+	fmt.Println("Json109=>")
+	metaObjectsListJson, err := json.Marshal(metaObjectsList)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+	}
+
+	fmt.Println(string(metaObjectsListJson))
+
 	ids := metaObjectsList
 	availableMetaObjectsPlaceholders := make([]string, len(ids))
 	for i := range availableMetaObjectsPlaceholders {
