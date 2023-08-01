@@ -892,7 +892,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 	var probalyAocatedMetaObjectsList []string
 	for probalyAocatedRows.Next() {
 		var probalyAocatedMetaObjects MetaObjects
-		err := rows.Scan(
+		err := probalyAocatedRows.Scan(
 			&probalyAocatedMetaObjects.MetaObjectID,
 		)
 		if err != nil {
@@ -1013,14 +1013,6 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 			}
 		}
 	}
-}
-
-func convertUint8ToInt32(uint8Slice []uint8) []int32 {
-	int32Slice := make([]int32, len(uint8Slice))
-	for i, val := range uint8Slice {
-		int32Slice[i] = int32(val)
-	}
-	return int32Slice
 }
 
 func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingProductID int, status string, productObjects []ProductObject) error {
