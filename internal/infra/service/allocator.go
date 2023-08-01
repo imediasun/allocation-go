@@ -10,10 +10,10 @@ import (
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/db"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/log"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/adapter"
+	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/model"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/repo"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/service"
 	"go.uber.org/zap"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -35,84 +35,26 @@ type AllocateResult struct {
 	Reason        string
 }
 
-type History struct {
-	User   Agent
-	Action string
-	Before Reservation
-	After  Reservation
-}
-
 type ActionAbstractUpdate struct{}
 
 type allocatorService struct {
 	ctx                   context.Context
-	reservation           Reservation
+	reservation           model.Reservation
 	logger                log.Logger
 	db                    db.DB
 	bookingRepoFactory    repo.BookingRepoFactory
 	bookingAdapterFactory adapter.BookingAdapterFactory
 }
 
-type Money struct {
-	Amount   float64
-	Currency string
-}
-
 type ReservationStatus string
 
 type ReservationPaymentOption string
 
-type ReservationGroup struct {
-	Item           BookingItems
-	ID             int32
-	BookingID      int32
-	PaxNationality string
-	StartDate      time.Time
-	EndDate        time.Time
-	ParentID       null.Int64
-	Items          []BookingItems
-}
-
-type CurrencyRate struct {
-	BookingID int64
-	Source    string
-	Target    string
-	Rate      float64
-	Date      time.Time
-	Final     bool
-}
-
-type Reservation struct {
-	ID                  int
-	Creator             Agent
-	Price               Money
-	CreationDate        time.Time
-	Status              ReservationStatus
-	ProviderReference   null.String
-	Channel             null.String
-	Remark              string
-	Client              null.String
-	Manual              bool
-	PaymentOption       null.String
-	Groups              []ReservationGroup
-	CancellationDate    []uint8
-	StartDate           []uint8
-	EndDate             []uint8
-	Segment             null.String
-	Source              null.String
-	Logs                interface{} // Replace with actual type
-	CurrencyRates       []CurrencyRate
-	Foct                bool
-	IsCityTaxToProvider bool
-	MetaGroupID         null.Int64
-	Customer            *Client
-}
-
-func (s *allocatorService) getAgent(id int32) (*Agent, error) {
+func (s *allocatorService) getAgent(id int32) (*model.Agent, error) {
 	fmt.Printf("Value is: %d and type is Agent: %T\\n", id)
 	row := s.db.QueryRow("SELECT id, name, AccountID FROM agents WHERE id = ?", id)
 
-	agent := &Agent{}
+	agent := &model.Agent{}
 	err := row.Scan(&agent.ID, &agent.Name, &agent.AccountID)
 	if err != nil {
 		return nil, err
@@ -121,17 +63,17 @@ func (s *allocatorService) getAgent(id int32) (*Agent, error) {
 	return agent, nil
 }
 
-func (s *allocatorService) getCurrencyRates(bookingID int) ([]CurrencyRate, error) {
+func (s *allocatorService) getCurrencyRates(bookingID int) ([]model.CurrencyRate, error) {
 	rows, err := s.db.Query("SELECT BookingID, Source, Target, Rate, Date, Final FROM booking_currency_rates WHERE BookingID = ?", bookingID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var rates []CurrencyRate
+	var rates []model.CurrencyRate
 
 	for rows.Next() {
-		var rate CurrencyRate
+		var rate model.CurrencyRate
 
 		err := rows.Scan(&rate.BookingID, &rate.Source, &rate.Target, &rate.Rate, &rate.Date, &rate.Final)
 		if err != nil {
@@ -156,7 +98,7 @@ func convertNullStringToString(ns null.String) string {
 	return ""
 }
 
-func (s *allocatorService) getItemsForGroup(ctx context.Context, groupID int32) ([]BookingItems, error) {
+func (s *allocatorService) getItemsForGroup(ctx context.Context, groupID int32) ([]model.BookingItems, error) {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	rows, err := s.db.Query("SELECT ID,Type,VenueID,ProductID,Status FROM booking_items WHERE GroupID = ?", groupID)
 	if err != nil {
@@ -164,11 +106,11 @@ func (s *allocatorService) getItemsForGroup(ctx context.Context, groupID int32) 
 	}
 	defer rows.Close()
 
-	items := make([]BookingItems, 0)
+	items := make([]model.BookingItems, 0)
 	var count int
 	for rows.Next() {
 		count++
-		var item BookingItems
+		var item model.BookingItems
 
 		err := rows.Scan(&item.ID, &item.Type, &item.VenueID, &item.ProductID, &item.Status)
 		if err != nil {
@@ -200,7 +142,7 @@ func (s *allocatorService) getItemsForGroup(ctx context.Context, groupID int32) 
 	return items, nil
 }
 
-func (s *allocatorService) getGroups(ctx context.Context, bookingID int) ([]ReservationGroup, error) {
+func (s *allocatorService) getGroups(ctx context.Context, bookingID int) ([]model.ReservationGroup, error) {
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 
@@ -210,11 +152,11 @@ func (s *allocatorService) getGroups(ctx context.Context, bookingID int) ([]Rese
 	}
 	defer rows.Close()
 
-	groups := make([]ReservationGroup, 0)
+	groups := make([]model.ReservationGroup, 0)
 	var count int
 	for rows.Next() {
 		count++
-		group := ReservationGroup{}
+		group := model.ReservationGroup{}
 		var startDate, endDate string // Use string type to store the date and time as strings
 
 		err = rows.Scan(&group.ID, &group.BookingID, &group.PaxNationality, &startDate, &endDate, &group.ParentID)
@@ -280,22 +222,22 @@ func (s *allocatorService) getGroups(ctx context.Context, bookingID int) ([]Rese
 	return groups, nil
 }
 
-func (s *allocatorService) getProduct(productID string) (Product, error) {
+func (s *allocatorService) getProduct(productID string) (model.Product, error) {
 
 	fmt.Printf("Value is: %d and type is PProductID: %T\\n", productID)
 	row := s.db.QueryRow("SELECT ID, Status, product_type FROM products WHERE ID = ?", productID)
 
-	var product Product
+	var product model.Product
 	err := row.Scan(&product.ID, &product.Status, &product.ProductType) // and so on for all fields in Product
 	if err != nil {
-		return Product{}, err
+		return model.Product{}, err
 	}
 
 	return product, nil
 }
 
-func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int32) ([]Reservation, error) {
-	var reservationList []Reservation
+func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int32) ([]model.Reservation, error) {
+	var reservationList []model.Reservation
 	fmt.Printf("Value is: %d and type is BookingID: %T\\n", bookingIDs)
 	ids := bookingIDs
 	placeholders := make([]string, len(ids))
@@ -313,13 +255,13 @@ func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int
 	rows, err := s.db.Query(query, interfaceIDs...)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return []Reservation{}, ErrUserNotFound
+			return []model.Reservation{}, ErrUserNotFound
 		}
-		return []Reservation{}, err
+		return []model.Reservation{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var reservation Reservation
+		var reservation model.Reservation
 		err := rows.Scan(
 			&reservation.ID,
 			&reservation.ProviderReference,
@@ -362,12 +304,12 @@ func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int
 	return reservationList, nil
 }
 
-func (s *allocatorService) getReservation(ctx context.Context, bookingID int) (*Reservation, error) {
+func (s *allocatorService) getReservation(ctx context.Context, bookingID int) (*model.Reservation, error) {
 
 	fmt.Printf("Value is: %d and type is BookingID: %T\\n", bookingID)
 	row := s.db.QueryRow("SELECT ID,ProviderReference,Channel,Client,PaymentOption,CancellationDate,Segment,Source,Foct,MetaGroupID	FROM bookings WHERE ID = ?", bookingID)
 
-	reservation := &Reservation{}
+	reservation := &model.Reservation{}
 	err := row.Scan(
 		&reservation.ID,
 		&reservation.ProviderReference,
@@ -418,25 +360,6 @@ type Service struct {
 
 type VenueAutoAllocate struct {
 	AutoAllocate bool `db:"AutoAllocate"`
-}
-
-type Client struct {
-	ID             null.Int32  `db:"ID"`
-	AccountID      null.Int32  `db:"AccountID"`
-	Email          null.String `db:"Email"`
-	Phone          null.String `db:"Phone"`
-	Title          null.String `db:"Title"`
-	Gender         null.String `db:"Gender"`
-	Nationality    null.String `db:"Nationality"`
-	LanguageID     null.Int32  `db:"LanguageID"`
-	Identification null.String `db:"Identification"`
-	LastName       null.String `db:"LastName"`
-	BirthDate      []uint8     `db:"BirthDate"`
-	Address        null.String `db:"Address"`
-	AdditionalInfo null.String `db:"AdditionalInfo"`
-	AgentID        null.Int32  `db:"AgentID"`
-	CreatedAt      []uint8     `db:"CreatedAt"`
-	Status         null.String `db:"Status"`
 }
 
 type ReservationCommissionType struct {
@@ -490,7 +413,7 @@ WHERE bookings.ID = ?;`
 
 }
 
-func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int32, productEntity Product, startDate, endDate time.Time) ([]ProductObject, error) {
+func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int32, productEntity model.Product, startDate, endDate time.Time) ([]ProductObject, error) {
 	// Prepare the criteria for the ProductObject query
 	var productIDs []string
 	productIDs = append(productIDs, productEntity.ID)
@@ -806,41 +729,16 @@ type BookingAllocationAndItems struct {
 	LockedBy     null.Int32  `db:"LockedBy"`
 }
 
-type BookingItems struct {
-	ID        int         `db:"id"`
-	Type      string      `db:"Type"`
-	VenueID   int32       `db:"VenueID"`
-	ProductID null.String `db:"ProductID"`
-	Status    string      `db:"Status"`
-	Product   Product
-}
-
-type BookingGroups struct {
-	ID             int32       `db:"ID"`
-	BookingID      int32       `db:"BookingID"`
-	PaxNationality string      `db:"PaxNationality"`
-	StartDate      []uint8     `db:"StartDate"`
-	EndDate        []uint8     `db:"EndDate"`
-	ParentID       null.String `db:"ParentID"`
-	Remark         null.String `db:"Remark"`
-}
-
-type Agent struct {
-	ID        int32  `db:"id"`
-	Name      string `db:"name"`
-	AccountID int32  `db:"accountID"`
-}
-
-func (s *allocatorService) getUserFromDatabase(userID *int32) (Agent, error) {
+func (s *allocatorService) getUserFromDatabase(userID *int32) (model.Agent, error) {
 	query := "SELECT id, name, AccountID FROM agents WHERE id = ?"
-	var agent Agent
+	var agent model.Agent
 
 	rows, err := s.db.Query(query, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return Agent{}, ErrUserNotFound
+			return model.Agent{}, ErrUserNotFound
 		}
-		return Agent{}, err
+		return model.Agent{}, err
 	}
 	defer rows.Close()
 
@@ -848,19 +746,13 @@ func (s *allocatorService) getUserFromDatabase(userID *int32) (Agent, error) {
 		// Scan the values from the row into the user variable
 		err := rows.Scan(&agent.ID, &agent.Name, &agent.AccountID)
 		if err != nil {
-			return Agent{}, err
+			return model.Agent{}, err
 		}
 	} else {
-		return Agent{}, ErrUserNotFound
+		return model.Agent{}, ErrUserNotFound
 	}
 
 	return agent, nil
-}
-
-type Product struct {
-	ID          string
-	Status      string
-	ProductType string `db:"product_type"`
 }
 
 type MetaObjects struct {
@@ -874,7 +766,7 @@ type ProductObject struct {
 }
 
 type HistorySaver interface {
-	Save(history History) error
+	Save(history model.History) error
 }
 
 type historySaver struct {
@@ -891,75 +783,6 @@ type ProductObjectCriteria struct {
 	Active           bool
 	IDs              []int
 }
-
-func joinInts(ints []int) string {
-	var strInts []string
-	for _, i := range ints {
-		strInts = append(strInts, strconv.Itoa(i))
-	}
-	return strings.Join(strInts, "|")
-}
-
-func convertUint8ToInt(int32Slice [][]uint8) [][]int {
-	intSlice := make([][]int, len(int32Slice))
-	for i, innerSlice := range int32Slice {
-		intSlice[i] = make([]int, len(innerSlice))
-		for j, val := range innerSlice {
-			intSlice[i][j] = int(val)
-		}
-	}
-	return intSlice
-}
-
-func joinTimes(t1, t2 []uint8) string {
-	// Convert []uint8 to strings
-	t1Str := string(t1)
-	t2Str := string(t2)
-
-	// Parse the strings into time.Time objects
-	t1Time, err := time.Parse(time.RFC3339, t1Str)
-	if err != nil {
-		// Handle the error if necessary
-	}
-	t2Time, err := time.Parse(time.RFC3339, t2Str)
-	if err != nil {
-		// Handle the error if necessary
-	}
-
-	// Format the time objects and return the result
-	return fmt.Sprintf("%s|%s", t1Time.Format(time.RFC3339), t2Time.Format(time.RFC3339))
-}
-
-func joinArrayInts(ints [][]int) string {
-	var strInts []string
-	for _, innerInts := range ints {
-		strInnerInts := make([]string, len(innerInts))
-		for i, val := range innerInts {
-			strInnerInts[i] = strconv.Itoa(val)
-		}
-		strInts = append(strInts, strings.Join(strInnerInts, "|"))
-	}
-	return strings.Join(strInts, "|")
-}
-
-/*func (c *ProductObjectCriteria) Hash() string {
-	result := []string{
-		joinArrayInts(convertUint8ToInt(c.ProductIDs)),
-		joinTimes(c.PeriodStart, c.PeriodEnd),
-		strconv.Itoa(int(c.VenueID)),
-		strconv.Itoa(c.ViewingAccountID),
-		strconv.FormatBool(c.Active),
-		joinInts(c.IDs),
-		c.PeriodType,
-	}
-
-	for i, v := range result {
-		if v == "" {
-			result[i] = "\x00" // Change empty string to binary zero
-		}
-	}
-	return strings.Join(result, "|")
-}*/
 
 func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, isNotify bool) {
 	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
@@ -978,41 +801,6 @@ func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, 
 	}
 
 }
-
-/*func buildQuery(productObjectCriteria ProductObjectCriteria) (string, []interface{}) {
-	var query strings.Builder
-	var params []interface{}
-
-	mysqlDateFormatPeriodStart := productObjectCriteria.PeriodStart.Format("2006-01-02")
-	mysqlDateFormatPeriodEnd := productObjectCriteria.PeriodEnd.Format("2006-01-02")
-
-	query.WriteString("SELECT DISTINCT po.ID FROM product_objects AS po    INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' AND poProductID.Value IN (")
-
-	for i := range productObjectCriteria.ProductIDs {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		query.WriteString("?")
-		params = append(params, productObjectCriteria.ProductIDs[i])
-	}
-	query.WriteString(") ")
-
-	query.WriteString("INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active' AND poActive.Value = '1' WHERE NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID FROM product_object_statuses AS pos WHERE pos.Status IN ('out_of_order', 'out_of_service') AND Date BETWEEN DATE(%s) AND DATE(%s) - INTERVAL 1 DAY) AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID FROM booking_groups AS bg    INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
-	query.WriteString(" WHERE bi.ProductID IN (")
-	for i := range productObjectCriteria.ProductIDs {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		query.WriteString("?")
-		params = append(params, productObjectCriteria.ProductIDs[i])
-	}
-	query.WriteString(") ")
-	query.WriteString(" AND bi.ProductType = 'room' AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(%s) AND DATE(bg.StartDate) <= DATE(%s) - INTERVAL 1 DAY);")
-
-	result := fmt.Sprintf(query.String(), mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
-
-	return result, params
-}*/
 
 func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, bookingProductID string, criteria ProductObjectCriteria) ([]ProductObject, error) {
 
@@ -1180,7 +968,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 		}
 		fmt.Println("groupItemsJSON")
 		fmt.Println(string(groupItemsJSON))
-		var product Product
+		var product model.Product
 		for _, item := range group.Items {
 			fmt.Printf("Value is: %d and type is item.Type: %T\\n", item.Type)
 
