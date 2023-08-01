@@ -865,7 +865,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 	var availableMetaObjectsList []string
 	for availableMetaObjectsRows.Next() {
 		var availableMetaObjects MetaObjects
-		err := rows.Scan(
+		err := availableMetaObjectsRows.Scan(
 			&availableMetaObjects.MetaObjectID,
 		)
 		if err != nil {
@@ -919,10 +919,10 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 
 	var allocatableProductObjects []ProductObject
 
-	for rows.Next() {
+	for toFilterRows.Next() {
 		var productObject ProductObject
 
-		err := rows.Scan(&productObject.ID)
+		err := toFilterRows.Scan(&productObject.ID)
 		if err != nil {
 			logger.Error("failed to Scan", zap.Error(err))
 			return nil, err
