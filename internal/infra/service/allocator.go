@@ -429,7 +429,7 @@ func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int3
 	fmt.Printf("Value is: %d and type is productObjectCriteria: %T\\n", productObjectCriteria)
 
 	// Fetch the ProductObjects from the database using the criteria
-	productObjects, err := s.fetchAllocatableProductObjects(ctx, productIDs, productObjectCriteria)
+	productObjects, err := s.fetchAllocatableProductObjects(ctx, productIDs, productObjectCriteria, 628044)
 	if err != nil {
 		return nil, err
 	}
@@ -802,14 +802,56 @@ func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, 
 
 }
 
-func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, bookingProductIDs []string, criteria ProductObjectCriteria) ([]MetaObjects, error) {
+func buildQuery(productObjectCriteria ProductObjectCriteria, metaObjectsList []string) (string, []interface{}) {
+	var query strings.Builder
+	var params []interface{}
+
+	mysqlDateFormatPeriodStart := productObjectCriteria.PeriodStart.Format("2006-01-02")
+	mysqlDateFormatPeriodEnd := productObjectCriteria.PeriodEnd.Format("2006-01-02")
+	query.WriteString("SELECT DISTINCT MAX(po.ID) ")
+	query.WriteString("FROM product_objects AS po ")
+	query.WriteString("WHERE po.ID IN (")
+	for i := range metaObjectsList {
+		if i > 0 {
+			query.WriteString(", ")
+		}
+		query.WriteString("?")
+		params = append(params, metaObjectsList[i])
+	}
+	query.WriteString(") ")
+	query.WriteString("AND NOT po.ID IN (SELECT DISTINCT pos.MetaObjectID ")
+	query.WriteString("FROM product_object_statuses AS pos ")
+	query.WriteString("WHERE pos.Status IN ('out_of_order', 'out_of_service') ")
+	query.WriteString("AND Date BETWEEN DATE(%s) AND DATE(%s) - INTERVAL 1 DAY) ")
+	//params = append(params, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
+	query.WriteString("AND NOT po.ID IN (SELECT ba.MetaObjectID AS ID ")
+	query.WriteString("FROM booking_groups AS bg ")
+	query.WriteString("INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID ")
+	query.WriteString("LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID ")
+	query.WriteString("WHERE bi.ProductID IN (")
+	for i := range productObjectCriteria.ProductIDs {
+		if i > 0 {
+			query.WriteString(", ")
+		}
+		query.WriteString("?")
+		params = append(params, productObjectCriteria.ProductIDs[i])
+	}
+	query.WriteString(") ")
+
+	query.WriteString("AND bi.ProductType = 'room' ")
+
+	query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(%s) ")
+	query.WriteString("AND DATE(bg.StartDate) <= DATE(%s) - INTERVAL 1 DAY);")
+
+	//params = append(params, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
+	resultQuery := fmt.Sprintf(query.String(), mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
+	return resultQuery, params
+}
+
+func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, bookingProductIDs []string, criteria ProductObjectCriteria, bookingProductID int) ([]MetaObjects, error) {
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	//fmt.Printf("Value is: %d and type is hashCriteria: %T\\n", hashCriteria)
-	//query, params := buildQuery(criteria)
-
-	mysqlDateFormatPeriodStart := criteria.PeriodStart.Format("2006-01-02")
-	mysqlDateFormatPeriodEnd := criteria.PeriodEnd.Format("2006-01-02")
 
 	productIds := bookingProductIDs
 	productIdsPlaceholders := make([]string, len(productIds))
@@ -817,7 +859,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 		productIdsPlaceholders[i] = "?"
 	}
 
-	productObjectsQuery := fmt.Sprintf("SELECT DISTINCT po.ID FROM product_objects AS po INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active'  INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' WHERE poActive.Value = '1' AND poProductID.Value IN  (%s)", strings.Join(productIdsPlaceholders, ","))
+	productObjectsQuery := fmt.Sprintf("SELECT DISTINCT po.ID FROM product_objects AS po INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active'  INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' INNER JOIN booking_allocations AS ba ON po.ID = ba.MetaObjectID WHERE  poActive.Value = '1' AND poProductID.Value IN  (%s) AND po.ID NOT IN (SELECT DISTINCT ba.MetaObjectID WHERE ba.Status IN ('allocated') AND ba.BookingProductID IN (?))", strings.Join(productIdsPlaceholders, ","))
 
 	var productObjectsInterfaceIDs []interface{}
 	for _, id := range bookingProductIDs {
@@ -827,6 +869,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 		productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, id)
 		fmt.Printf("Value is: %d productObjectsInterfaceIDs4: %T\\n", productObjectsInterfaceIDs)
 	}
+	productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, bookingProductID)
 
 	// Execute the query with the interfaceIDs as separate parameters
 	rows, err := s.db.Query(productObjectsQuery, productObjectsInterfaceIDs...)
@@ -860,21 +903,15 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 	for i := range availableMetaObjectsPlaceholders {
 		availableMetaObjectsPlaceholders[i] = "?"
 	}
+	availableMetaObjectsQuery, params := buildQuery(criteria, metaObjectsList)
 
-	availableMetaObjectsQuery := fmt.Sprintf("SELECT DISTINCT MetaObjectID AS ID FROM product_object_statuses WHERE Date BETWEEN DATE('%s') AND DATE('%s') - INTERVAL 1 DAY AND NOT Status IN ('available') AND MetaObjectID IN (%s)", mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, strings.Join(availableMetaObjectsPlaceholders, ","))
-	var interfaceIDs []interface{}
-	for _, id := range metaObjectsList {
-		interfaceIDs = append(interfaceIDs, id)
-	}
-	fmt.Println("Interface")
-	fmt.Println(len(interfaceIDs))
 	// Execute the query with the interfaceIDs as separate parameters
-	availableMetaObjectsRows, err := s.db.Query(availableMetaObjectsQuery, interfaceIDs...)
+	availableMetaObjectsRows, err := s.db.Query(availableMetaObjectsQuery, params...)
 	if err != nil {
-
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
 	}
 	defer availableMetaObjectsRows.Close()
-	var availableMetaObjectsList []string
+	var allocatableProductObjects []MetaObjects
 	for availableMetaObjectsRows.Next() {
 		var availableMetaObjects MetaObjects
 		err := availableMetaObjectsRows.Scan(
@@ -884,39 +921,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 			return nil, err
 		}
 
-		availableMetaObjectsList = append(availableMetaObjectsList, availableMetaObjects.MetaObjectsID)
-	}
-
-	fmt.Println("Json11=>")
-	availableMetaObjectsListJson, err := json.Marshal(availableMetaObjectsList)
-	if err != nil {
-		logger.Error("failed to marshal user to JSON", zap.Error(err))
-	}
-
-	fmt.Println(string(availableMetaObjectsListJson))
-
-	probalyAocatedMetaObjectsQuery := fmt.Sprintf("SELECT MAX(ba.MetaObjectID) AS MetaObjectsID FROM booking_allocations AS ba INNER JOIN booking_items AS bi ON ba.BookingProductID = bi.ID  INNER JOIN booking_groups AS bg ON bi.GroupID = bg.ID WHERE DATE(bg.EndDate) > DATE('%s') AND DATE(bg.StartDate) < DATE('%s') AND ba.MetaObjectID IN (%s)", mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, strings.Join(availableMetaObjectsPlaceholders, ","))
-
-	// Execute the query with the interfaceIDs as separate parameters
-	probalyAocatedRows, err := s.db.Query(probalyAocatedMetaObjectsQuery, interfaceIDs...)
-	if err != nil {
-		logger.Error("failed to fetch data from MYSQL", zap.Error(err))
-		return nil, err
-	}
-	defer probalyAocatedRows.Close()
-
-	var allocatableProductObjects []MetaObjects
-
-	for probalyAocatedRows.Next() {
-		var productObject MetaObjects
-
-		err := probalyAocatedRows.Scan(&productObject.MetaObjectsID)
-		if err != nil {
-			logger.Error("failed to Scan", zap.Error(err))
-			return nil, err
-		}
-
-		allocatableProductObjects = append(allocatableProductObjects, productObject)
+		allocatableProductObjects = append(allocatableProductObjects, availableMetaObjects)
 	}
 
 	fmt.Println("Json7=>")
@@ -983,9 +988,9 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 				fmt.Printf("Value is: %d and type is productObjectCriteria2: %T\\n", productObjectCriteria)
 
 				// Fetch allocatable product objects using criteria
-				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{product.ID}, productObjectCriteria)
+				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{product.ID}, productObjectCriteria, item.ID)
 				if err != nil {
-					// Handle the error
+					logger.Error("failed to marshal user to JSON", zap.Error(err))
 				}
 				fmt.Println("beforeCheck")
 
