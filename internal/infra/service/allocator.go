@@ -20,12 +20,6 @@ import (
 
 var ErrUserNotFound = errors.New("user not found")
 
-//460769 mo.63a975e4784d1 p.63a975e473fe7
-
-//Должен быть
-//461054 p.57eb86aecace1
-
-//Пробуем mo.63d112187cd45 сделать available
 type AllocateResult struct {
 	Status        string
 	BookingID     int
@@ -504,7 +498,7 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 		return nil, err
 	}
 	fmt.Println(string(reservationsJSON))
-
+	allocatedStatus := "allocated"
 	//var results []AllocateResult
 	for _, reservation := range reservations {
 		needToAmend := false
@@ -517,61 +511,22 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 		defer tx.Rollback(ctx)
 
 		for _, group := range reservation.Groups {
+			startDate := group.StartDate
+			endDate := group.EndDate
 			for _, item := range group.Items {
-				isAllocatedObject, err := s.getAllocatedObject(item.ID)
+				tempAllocated, err := s.allocation(ctx, item, allocatedStatus, startDate, endDate)
 				if err != nil {
-					return nil, err
+					logger.Error("failed to marshal user to JSON", zap.Error(err))
 				}
-				if item.Product.ProductType == "room" &&
-					item.Status == "confirmed" &&
-					!isAllocatedObject {
-					fmt.Printf("getAllocatableRooms")
-					roomsByProduct, err := s.getAllocatableRooms(ctx, item.VenueID, item.Product, group.StartDate, group.EndDate)
-					if err != nil {
-						return nil, err
-					}
-
-					if len(roomsByProduct) == 0 {
-						results = append(results, AllocateResult{
-							Status:    "unallocated",
-							BookingID: reservation.ID,
-							GroupID:   group.ID,
-							ItemID:    item.ID,
-							Reason:    "No available rooms for this date period!",
-						})
-						continue
-					}
-
-					room := roomsByProduct[0]
-					//roomsByProduct = roomsByProduct[1:]
-					//needToAmend, err = s.allocateRoom(item.Product.ID)
-					fmt.Println("Json095=>")
-					roomsByProductJson, err := json.Marshal(roomsByProduct)
-					if err != nil {
-						logger.Error("failed to marshal user to JSON", zap.Error(err))
-					}
-
-					fmt.Println(string(roomsByProductJson))
-					err = s.updateAllocationStatus(ctx, item.ID, "allocated", roomsByProduct)
-					if err != nil {
-						return nil, err
-					}
+				for _, obj := range tempAllocated {
 
 					results = append(results, AllocateResult{
 						Status:        "allocated",
 						BookingID:     reservation.ID,
 						GroupID:       group.ID,
 						ItemID:        item.ID,
-						AllocatedRoom: room,
+						AllocatedRoom: obj,
 					})
-
-					/*					history := History{
-											User:   user,
-											Action: "update",
-											Before: bookingBeforeAmend, // клон объекта reservation
-											After:  reservation,
-										}
-										s.historySaver.Save(history)*/
 				}
 			}
 		}
@@ -852,14 +807,15 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	//fmt.Printf("Value is: %d and type is hashCriteria: %T\\n", hashCriteria)
-
+	mysqlDateFormatPeriodStart := criteria.PeriodStart.Format("2006-01-02")
+	mysqlDateFormatPeriodEnd := criteria.PeriodEnd.Format("2006-01-02")
 	productIds := bookingProductIDs
 	productIdsPlaceholders := make([]string, len(productIds))
 	for i := range productIdsPlaceholders {
 		productIdsPlaceholders[i] = "?"
 	}
 
-	productObjectsQuery := fmt.Sprintf("SELECT DISTINCT po.ID FROM product_objects AS po INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active'  INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' INNER JOIN booking_allocations AS ba ON po.ID = ba.MetaObjectID WHERE  poActive.Value = '1' AND poProductID.Value IN  (%s) AND po.ID NOT IN (SELECT DISTINCT ba.MetaObjectID WHERE ba.Status IN ('allocated') AND ba.BookingProductID IN (?))", strings.Join(productIdsPlaceholders, ","))
+	productObjectsQuery := fmt.Sprintf("SELECT DISTINCT po.ID FROM product_objects AS po INNER JOIN product_objects AS poActive ON po.ID = poActive.ID AND poActive.Key = 'active'  INNER JOIN product_objects AS poProductID ON po.ID = poProductID.ID AND poProductID.Key = 'product_id' INNER JOIN product_objects AS poRoomNumber ON po.ID = poRoomNumber.ID AND poRoomNumber.Key = 'name' INNER JOIN booking_allocations AS ba ON po.ID = ba.MetaObjectID WHERE  poActive.Value = '1' AND poProductID.Value IN  (%s) AND po.ID NOT IN (SELECT DISTINCT ba.MetaObjectID AS ID  FROM booking_groups AS bg INNER JOIN booking_items AS bi ON bi.GroupID = bg.ID LEFT JOIN booking_allocations AS ba ON bi.ID = ba.BookingProductID WHERE bi.ProductID IN (%s) AND ba.MetaObjectID IS NOT NULL AND bi.ProductType = 'room'  AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE('%s') AND DATE(bg.StartDate) <= DATE('%s') - INTERVAL 1 DAY )", strings.Join(productIdsPlaceholders, ","), strings.Join(productIdsPlaceholders, ","), mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
 
 	var productObjectsInterfaceIDs []interface{}
 	for _, id := range bookingProductIDs {
@@ -867,9 +823,10 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 		fmt.Printf("Value is: %d productObjectsInterfaceIDs2: %T\\n", productObjectsInterfaceIDs)
 		fmt.Printf("Value is: %d productObjectsInterfaceIDs3: %T\\n", id)
 		productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, id)
+		productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, id)
 		fmt.Printf("Value is: %d productObjectsInterfaceIDs4: %T\\n", productObjectsInterfaceIDs)
 	}
-	productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, bookingProductID)
+	//productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, bookingProductID)
 
 	// Execute the query with the interfaceIDs as separate parameters
 	rows, err := s.db.Query(productObjectsQuery, productObjectsInterfaceIDs...)
@@ -935,14 +892,64 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 	return allocatableProductObjects, nil
 }
 
-func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservationID int, isNotify bool) {
+func (s *allocatorService) allocation(ctx context.Context, item model.BookingItems, allocatedStatus string, startDate time.Time, endDate time.Time) ([]MetaObjects, error) {
+	logger := s.logger.WithMethod(ctx, "AllocateAll")
+	var product model.Product
+	fmt.Printf("Value is: %d and type is item.Type: %T\\n", item.Type)
+
+	fmt.Printf("Value is: %d and type is item.Product.ProductType: %T\\n", item.Product.ProductType)
+	fmt.Printf("Value is: %d and type is ProductID: %T\\n", item.Product.ID)
+	isAllocatedObject, err := s.getAllocatedObject(item.ID)
+	if err != nil {
+		logger.Error("failed on getting AllocatedObject", zap.Error(err))
+	}
+	if item.Type == "product" && item.Product.ProductType == "room" &&
+		!isAllocatedObject {
+		fmt.Println("Point")
+
+		product = item.Product
+
+		// Create the productObjectCriteria
+		productObjectCriteria := ProductObjectCriteria{
+			PeriodStart: startDate,
+			PeriodEnd:   endDate,
+			ProductIDs:  []string{product.ID}, // Assuming product.ID is int
+			// ... set other criteria fields ...
+		}
+
+		fmt.Printf("Value is: %d and type is productObjectCriteria2: %T\\n", productObjectCriteria)
+
+		// Fetch allocatable product objects using criteria
+		allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{product.ID}, productObjectCriteria, item.ID)
+		if err != nil {
+			logger.Error("failed to marshal user to JSON", zap.Error(err))
+		}
+		fmt.Println("beforeCheck")
+
+		fmt.Println(len(allocatableProductObjects))
+		if len(allocatableProductObjects) > 0 {
+			fmt.Println("InCheck")
+			err := s.updateAllocationStatus(ctx, item.ID, allocatedStatus, allocatableProductObjects)
+			if err != nil {
+				logger.Error("failed to marshal user to JSON", zap.Error(err))
+			}
+			allocatableProductObjects = allocatableProductObjects[1:]
+		}
+		return allocatableProductObjects, nil
+	}
+
+	return nil, err
+
+}
+
+func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservationID int, isNotify bool) ([]MetaObjects, error) {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	fmt.Printf("Value is: %d and type is ReservationID: %T\\n", reservationID)
 	reservationToEdit, err := s.getReservation(ctx, reservationID)
 	if err != nil {
 		// Handle the error
-		fmt.Println("Error fetching reservation:", err)
-		return
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
 	}
 
 	allocatedStatus := "allocated"
@@ -951,6 +958,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 		logger.Error("failed to marshal user to JSON", zap.Error(err))
 	}
 	fmt.Println("reservationToEditJSON")
+	var allocatableProductObjects []MetaObjects
 	fmt.Println(string(reservationToEditJSON))
 	for _, group := range reservationToEdit.Groups {
 		startDate := group.StartDate
@@ -961,51 +969,22 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 		}
 		fmt.Println("groupItemsJSON")
 		fmt.Println(string(groupItemsJSON))
-		var product model.Product
+
 		for _, item := range group.Items {
-			fmt.Printf("Value is: %d and type is item.Type: %T\\n", item.Type)
-
-			fmt.Printf("Value is: %d and type is item.Product.ProductType: %T\\n", item.Product.ProductType)
-			fmt.Printf("Value is: %d and type is ProductID: %T\\n", item.Product.ID)
-			isAllocatedObject, err := s.getAllocatedObject(item.ID)
+			tempAllocated, _ := s.allocation(ctx, item, allocatedStatus, startDate, endDate)
 			if err != nil {
-				logger.Error("failed on getting AllocatedObject", zap.Error(err))
+				logger.Error("failed to marshal user to JSON", zap.Error(err))
 			}
-			if item.Type == "product" && item.Product.ProductType == "room" &&
-				!isAllocatedObject {
-				fmt.Println("Point")
-
-				product = item.Product
-
-				// Create the productObjectCriteria
-				productObjectCriteria := ProductObjectCriteria{
-					PeriodStart: startDate,
-					PeriodEnd:   endDate,
-					ProductIDs:  []string{product.ID}, // Assuming product.ID is int
-					// ... set other criteria fields ...
-				}
-
-				fmt.Printf("Value is: %d and type is productObjectCriteria2: %T\\n", productObjectCriteria)
-
-				// Fetch allocatable product objects using criteria
-				allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{product.ID}, productObjectCriteria, item.ID)
-				if err != nil {
-					logger.Error("failed to marshal user to JSON", zap.Error(err))
-				}
-				fmt.Println("beforeCheck")
-
-				fmt.Println(len(allocatableProductObjects))
-				if len(allocatableProductObjects) > 0 {
-					fmt.Println("InCheck")
-					err := s.updateAllocationStatus(ctx, item.ID, allocatedStatus, allocatableProductObjects)
-					if err != nil {
-						// Handle the error
-					}
-					allocatableProductObjects = allocatableProductObjects[1:]
-				}
+			for _, obj := range tempAllocated {
+				allocatableProductObjects = append(allocatableProductObjects, obj)
 			}
 		}
+
+		return allocatableProductObjects, nil
 	}
+
+	return nil, err
+
 }
 
 func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingProductID int, status string, productObjects []MetaObjects) error {
