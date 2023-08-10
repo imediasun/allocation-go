@@ -8,6 +8,7 @@ import (
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/common/adapter/log"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/adapter"
+	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/model"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/service"
 	"gitlab.hotel.tools/backend-team/allocation-go/pkg/api/openapi"
 	"go.uber.org/zap"
@@ -45,21 +46,22 @@ func (s *AllocatorService) FindPets(ctx echo.Context, params openapi.FindPetsPar
 	return domain.ErrUnimplemented
 }
 
-func (s *AllocatorService) AllocateAll(ctx echo.Context, reservationIDs []int32, userID *int32) error {
+func (s *AllocatorService) AllocateAll(ctx echo.Context, reservationIDs []int32, userID *int32) ([]model.AllocateResult, error) {
 
 	// Call the AllocateAll method and capture the slice of AllocateResult and error
-	_, err := s.allocatorService.AllocateAll(s.ctx, reservationIDs, userID)
+	resultsJson, err := s.allocatorService.AllocateAll(s.ctx, reservationIDs, userID)
 	if err != nil {
 		s.logger.Error("failed to allocate all", zap.Error(err))
 
 		// If there was an error, return it
-		return err
+		return nil, err
 	}
 
 	s.logger.Info("AddPet")
 
+	fmt.Println(resultsJson)
 	// If there was no error, return nil
-	return nil
+	return resultsJson, nil
 }
 
 func (s *AllocatorService) AutoAllocate(ctx echo.Context, reservationID int, isNotify bool) error {

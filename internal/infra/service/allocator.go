@@ -20,15 +20,6 @@ import (
 
 var ErrUserNotFound = errors.New("user not found")
 
-type AllocateResult struct {
-	Status        string
-	BookingID     int
-	GroupID       int32
-	ItemID        int
-	AllocatedRoom MetaObjects
-	Reason        string
-}
-
 type ActionAbstractUpdate struct{}
 
 type allocatorService struct {
@@ -45,7 +36,7 @@ type ReservationStatus string
 type ReservationPaymentOption string
 
 func (s *allocatorService) getAgent(id int32) (*model.Agent, error) {
-	fmt.Printf("Value is: %d and type is Agent: %T\\n", id)
+	//fmt.Printf("Value is: %d and type is Agent: %T\\n", id)
 	row := s.db.QueryRow("SELECT id, name, AccountID FROM agents WHERE id = ?", id)
 
 	agent := &model.Agent{}
@@ -218,7 +209,7 @@ func (s *allocatorService) getGroups(ctx context.Context, bookingID int) ([]mode
 
 func (s *allocatorService) getProduct(productID string) (model.Product, error) {
 
-	fmt.Printf("Value is: %d and type is PProductID: %T\\n", productID)
+	//fmt.Printf("Value is: %d and type is PProductID: %T\\n", productID)
 	row := s.db.QueryRow("SELECT ID, Status, product_type FROM products WHERE ID = ?", productID)
 
 	var product model.Product
@@ -232,7 +223,7 @@ func (s *allocatorService) getProduct(productID string) (model.Product, error) {
 
 func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int32) ([]model.Reservation, error) {
 	var reservationList []model.Reservation
-	fmt.Printf("Value is: %d and type is BookingID: %T\\n", bookingIDs)
+	//fmt.Printf("Value is: %d and type is BookingID: %T\\n", bookingIDs)
 	ids := bookingIDs
 	placeholders := make([]string, len(ids))
 	for i := range placeholders {
@@ -300,7 +291,7 @@ func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int
 
 func (s *allocatorService) getReservation(ctx context.Context, bookingID int) (*model.Reservation, error) {
 
-	fmt.Printf("Value is: %d and type is BookingID: %T\\n", bookingID)
+	//fmt.Printf("Value is: %d and type is BookingID: %T\\n", bookingID)
 	row := s.db.QueryRow("SELECT ID,ProviderReference,Channel,Client,PaymentOption,CancellationDate,Segment,Source,Foct,MetaGroupID	FROM bookings WHERE ID = ?", bookingID)
 
 	reservation := &model.Reservation{}
@@ -380,9 +371,9 @@ func NewAllocatorService(
 }
 
 func (s *allocatorService) getVenueAutoAllocate(ctx context.Context, reservationID int) (bool, error) {
-	fmt.Println("test")
+	//fmt.Println("test")
 	var venueAutoAllocate VenueAutoAllocate
-	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
+	//fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
 	query := `SELECT MAX(venues.AutoAllocate) as AutoAllocate
 FROM bookings
 JOIN booking_groups ON bookings.ID = booking_groups.BookingID
@@ -394,7 +385,7 @@ WHERE bookings.ID = ?;`
 		&venueAutoAllocate.AutoAllocate,
 	)
 
-	fmt.Printf("Value is: %d and type is AutoAllocatable: %T\\n", venueAutoAllocate.AutoAllocate)
+	//fmt.Printf("Value is: %d and type is AutoAllocatable: %T\\n", venueAutoAllocate.AutoAllocate)
 
 	if err != nil || !venueAutoAllocate.AutoAllocate {
 		if err == sql.ErrNoRows {
@@ -407,7 +398,7 @@ WHERE bookings.ID = ?;`
 
 }
 
-func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int32, productEntity model.Product, startDate, endDate time.Time) ([]MetaObjects, error) {
+func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int32, productEntity model.Product, startDate, endDate time.Time) ([]model.MetaObjects, error) {
 	// Prepare the criteria for the ProductObject query
 	var productIDs []string
 	productIDs = append(productIDs, productEntity.ID)
@@ -420,7 +411,7 @@ func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int3
 		PeriodType:  "allocatable",
 	}
 
-	fmt.Printf("Value is: %d and type is productObjectCriteria: %T\\n", productObjectCriteria)
+	//fmt.Printf("Value is: %d and type is productObjectCriteria: %T\\n", productObjectCriteria)
 
 	// Fetch the ProductObjects from the database using the criteria
 	productObjects, err := s.fetchAllocatableProductObjects(ctx, productIDs, productObjectCriteria, 628044)
@@ -429,7 +420,7 @@ func (s *allocatorService) getAllocatableRooms(ctx context.Context, venueID int3
 	}
 
 	// Filter out the excluded rooms, if any
-	var allocatableRooms []MetaObjects
+	var allocatableRooms []model.MetaObjects
 	for _, room := range productObjects {
 		allocatableRooms = append(allocatableRooms, room)
 	}
@@ -466,10 +457,10 @@ func (s *allocatorService) getAllocatedObjectStatus(bookingProductID int) (strin
 	return status, nil
 }
 
-func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int32, userID *int32) ([]byte, error) {
+func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int32, userID *int32) ([]model.AllocateResult, error) {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	//needToAmend := false
-	var results []AllocateResult
+	var results []model.AllocateResult
 
 	if reservationIDs == nil || len(reservationIDs) == 0 {
 		return nil, errors.New("Invalid parameter reservationIDs")
@@ -501,54 +492,51 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 	allocatedStatus := "allocated"
 	//var results []AllocateResult
 	for _, reservation := range reservations {
-		needToAmend := false
+		//needToAmend := false
 		//bookingBeforeAmend := reservation
-
-		tx, err := s.db.Begin(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer tx.Rollback(ctx)
 
 		for _, group := range reservation.Groups {
 			startDate := group.StartDate
 			endDate := group.EndDate
+			//fmt.Printf("Value is: %d and type is group.ID: %T\\n", group.ID)
 			for _, item := range group.Items {
-				tempAllocated, err := s.allocation(ctx, item, allocatedStatus, startDate, endDate)
-				if err != nil {
+				//fmt.Printf("Value is: %d and type is item.ID: %T\\n", item.ID)
+
+				alreadyAllocated, err := s.allocation(ctx, item, allocatedStatus, startDate, endDate)
+
+				if err != nil && alreadyAllocated != nil {
 					logger.Error("failed to marshal user to JSON", zap.Error(err))
-				}
-				for _, obj := range tempAllocated {
+				} else {
+					for _, obj := range alreadyAllocated {
+						allocateResult := model.AllocateResult{
+							Status:        "allocated",
+							BookingID:     reservation.ID,
+							GroupID:       group.ID,
+							ItemID:        item.ID,
+							AllocatedRoom: obj,
+						}
+						fmt.Println("Results")
+						results = append(results, allocateResult)
 
-					results = append(results, AllocateResult{
-						Status:        "allocated",
-						BookingID:     reservation.ID,
-						GroupID:       group.ID,
-						ItemID:        item.ID,
-						AllocatedRoom: obj,
-					})
+					}
+					fmt.Println("Return")
+					return results, nil
+
 				}
 			}
 		}
 
-		if needToAmend {
-			if err := tx.Commit(); err != nil {
-				logger.Error("failed to commit transaction", zap.Error(err))
-				return nil, err
-			}
-		}
+		/*		if needToAmend {
+				if err := tx.Commit(); err != nil {
+					logger.Error("failed to commit transaction", zap.Error(err))
+					return nil, err
+				}
+			}*/
 	}
 
 	fmt.Println("Json8=>")
-	resultsJSON, err := json.Marshal(results)
-	if err != nil {
-		logger.Error("failed to marshal user to JSON", zap.Error(err))
-		return nil, err
-	}
 
-	fmt.Println(string(resultsJSON))
-
-	return resultsJSON, nil
+	return results, nil
 }
 
 type Company struct {
@@ -710,10 +698,6 @@ func (s *allocatorService) getUserFromDatabase(userID *int32) (model.Agent, erro
 	return agent, nil
 }
 
-type MetaObjects struct {
-	MetaObjectsID string `db:"MetaObjectID"`
-	// Другие поля объекта продукта
-}
 type ProductObject struct {
 	ID     string `db:"id"`
 	RoomID int32  `db:"room_id"`
@@ -740,7 +724,7 @@ type ProductObjectCriteria struct {
 }
 
 func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, isNotify bool) {
-	fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
+	//fmt.Printf("Value is: %d and type is reservationID: %T\\n", reservationID)
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	venueAutoAllocate, err := s.getVenueAutoAllocate(ctx, reservationID)
@@ -748,10 +732,8 @@ func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, 
 		logger.Error("Error getting venueAutoAllocate:", zap.Error(err))
 		//return nil, err
 	}
-	fmt.Println("venueAutoAllocate")
-	fmt.Println(venueAutoAllocate)
+
 	if venueAutoAllocate {
-		fmt.Println("getVenueAutoAllocate==true")
 		s.autoAllocateReservation(ctx, reservationID, isNotify)
 	}
 
@@ -803,7 +785,7 @@ func buildQuery(productObjectCriteria ProductObjectCriteria, metaObjectsList []s
 	return resultQuery, params
 }
 
-func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, bookingProductIDs []string, criteria ProductObjectCriteria, bookingProductID int) ([]MetaObjects, error) {
+func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, bookingProductIDs []string, criteria ProductObjectCriteria, bookingProductID int) ([]model.MetaObjects, error) {
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	//fmt.Printf("Value is: %d and type is hashCriteria: %T\\n", hashCriteria)
@@ -819,16 +801,10 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 
 	var productObjectsInterfaceIDs []interface{}
 	for _, id := range bookingProductIDs {
-		fmt.Printf("Value is: %d productObjectsInterfaceIDs: %T\\n", id)
-		fmt.Printf("Value is: %d productObjectsInterfaceIDs2: %T\\n", productObjectsInterfaceIDs)
-		fmt.Printf("Value is: %d productObjectsInterfaceIDs3: %T\\n", id)
 		productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, id)
 		productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, id)
-		fmt.Printf("Value is: %d productObjectsInterfaceIDs4: %T\\n", productObjectsInterfaceIDs)
 	}
-	//productObjectsInterfaceIDs = append(productObjectsInterfaceIDs, bookingProductID)
 
-	// Execute the query with the interfaceIDs as separate parameters
 	rows, err := s.db.Query(productObjectsQuery, productObjectsInterfaceIDs...)
 	if err != nil {
 		return nil, err
@@ -868,9 +844,9 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 		logger.Error("failed to marshal user to JSON", zap.Error(err))
 	}
 	defer availableMetaObjectsRows.Close()
-	var allocatableProductObjects []MetaObjects
+	var allocatableProductObjects []model.MetaObjects
 	for availableMetaObjectsRows.Next() {
-		var availableMetaObjects MetaObjects
+		var availableMetaObjects model.MetaObjects
 		err := availableMetaObjectsRows.Scan(
 			&availableMetaObjects.MetaObjectsID,
 		)
@@ -881,7 +857,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 		allocatableProductObjects = append(allocatableProductObjects, availableMetaObjects)
 	}
 
-	fmt.Println("Json7=>")
+	//fmt.Println("Json7=>")
 	allocatableProductObjectsJson, err := json.Marshal(allocatableProductObjects)
 	if err != nil {
 		logger.Error("failed to marshal user to JSON", zap.Error(err))
@@ -892,13 +868,13 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 	return allocatableProductObjects, nil
 }
 
-func (s *allocatorService) allocation(ctx context.Context, item model.BookingItems, allocatedStatus string, startDate time.Time, endDate time.Time) ([]MetaObjects, error) {
+func (s *allocatorService) allocation(ctx context.Context, item model.BookingItems, allocatedStatus string, startDate time.Time, endDate time.Time) ([]model.MetaObjects, error) {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	var product model.Product
-	fmt.Printf("Value is: %d and type is item.Type: %T\\n", item.Type)
+	//fmt.Printf("Value is: %d and type is item.Type: %T\\n", item.Type)
 
-	fmt.Printf("Value is: %d and type is item.Product.ProductType: %T\\n", item.Product.ProductType)
-	fmt.Printf("Value is: %d and type is ProductID: %T\\n", item.Product.ID)
+	//fmt.Printf("Value is: %d and type is item.Product.ProductType: %T\\n", item.Product.ProductType)
+	//fmt.Printf("Value is: %d and type is ProductID: %T\\n", item.Product.ID)
 	isAllocatedObject, err := s.getAllocatedObject(item.ID)
 	if err != nil {
 		logger.Error("failed on getting AllocatedObject", zap.Error(err))
@@ -917,34 +893,36 @@ func (s *allocatorService) allocation(ctx context.Context, item model.BookingIte
 			// ... set other criteria fields ...
 		}
 
-		fmt.Printf("Value is: %d and type is productObjectCriteria2: %T\\n", productObjectCriteria)
-
 		// Fetch allocatable product objects using criteria
 		allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{product.ID}, productObjectCriteria, item.ID)
 		if err != nil {
 			logger.Error("failed to marshal user to JSON", zap.Error(err))
 		}
-		fmt.Println("beforeCheck")
-
-		fmt.Println(len(allocatableProductObjects))
 		if len(allocatableProductObjects) > 0 {
 			fmt.Println("InCheck")
 			err := s.updateAllocationStatus(ctx, item.ID, allocatedStatus, allocatableProductObjects)
 			if err != nil {
 				logger.Error("failed to marshal user to JSON", zap.Error(err))
 			}
-			allocatableProductObjects = allocatableProductObjects[1:]
+
+			/*if len(allocatableProductObjects) > 1 {
+				return allocatableProductObjects[1:], nil
+			} else{*/
+			return allocatableProductObjects, err
+			/*	}*/
+
 		}
-		return allocatableProductObjects, nil
+
+	} else {
+		fmt.Println("Not Point")
 	}
 
 	return nil, err
 
 }
 
-func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservationID int, isNotify bool) ([]MetaObjects, error) {
+func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservationID int, isNotify bool) ([]model.MetaObjects, error) {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
-	fmt.Printf("Value is: %d and type is ReservationID: %T\\n", reservationID)
 	reservationToEdit, err := s.getReservation(ctx, reservationID)
 	if err != nil {
 		// Handle the error
@@ -957,8 +935,8 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 	if err != nil {
 		logger.Error("failed to marshal user to JSON", zap.Error(err))
 	}
-	fmt.Println("reservationToEditJSON")
-	var allocatableProductObjects []MetaObjects
+	//fmt.Println("reservationToEditJSON")
+	var allocatableProductObjects []model.MetaObjects
 	fmt.Println(string(reservationToEditJSON))
 	for _, group := range reservationToEdit.Groups {
 		startDate := group.StartDate
@@ -967,7 +945,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 		if err != nil {
 			logger.Error("failed to marshal user to JSON", zap.Error(err))
 		}
-		fmt.Println("groupItemsJSON")
+		//fmt.Println("groupItemsJSON")
 		fmt.Println(string(groupItemsJSON))
 
 		for _, item := range group.Items {
@@ -987,41 +965,18 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 
 }
 
-func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingProductID int, status string, productObjects []MetaObjects) error {
-
-	logger := s.logger.WithMethod(ctx, "AllocateAll")
-	fmt.Println("updateAllocationStatus")
-	fmt.Printf("INCOME_PARAMETER: %d bookingProductID: %T\\n", bookingProductID)
-	/*	fmt.Printf("Value is: %d and type is 33: %T\\n", bookingProductID)
-		bookingProductIDResults := bookingProductID*/
-	fmt.Println("Json098=>")
-	/*	bookingProductIDJson, err := json.Marshal(bookingProductIDResults)
-		if err != nil {
-			logger.Error("failed to marshal user to JSON", zap.Error(err))
-		}
-
-		fmt.Println(string(bookingProductIDJson))*/
-
-	fmt.Println("Json099=>")
-	productObjectsJson, err := json.Marshal(productObjects)
-	if err != nil {
-		logger.Error("failed to marshal user to JSON", zap.Error(err))
-	}
-	fmt.Println(string(productObjectsJson))
+func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingProductID int, status string, productObjects []model.MetaObjects) error {
 	for _, layout := range productObjects {
 		var bookingProductIdUpdated int
 
-		err = s.db.QueryRow("SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ? AND BookingProductID = ?", layout.MetaObjectsID, bookingProductID).Scan(&bookingProductIdUpdated)
-		fmt.Printf("SELECT_RESULT: %d bookingProductIdUpdated: %T\\n", bookingProductIdUpdated)
+		err := s.db.QueryRow("SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ? AND BookingProductID = ?", layout.MetaObjectsID, bookingProductID).Scan(&bookingProductIdUpdated)
 		if err != nil {
-			fmt.Printf("INSERT_CRITERIA: %d bookingProductID: %T\\n", bookingProductID)
 			_, err = s.db.Exec("INSERT INTO booking_allocations (BookingProductID,MetaObjectID, Status, StatusTimes, LockedBy) VALUES (?,?, ?, ?, ?)", bookingProductID, layout.MetaObjectsID, "allocated", "[]", nil)
 			if err != nil {
 				return fmt.Errorf("failed to update allocation status: %w", err)
 			}
 			fmt.Println("New row inserted successfully!")
 		} else {
-			fmt.Printf("UPDATE_CRITERIA: %d layout.ID: %T\\n", layout.MetaObjectsID)
 			_, err = s.db.Exec("UPDATE booking_allocations SET BookingProductID = ?, Status = ?, StatusTimes = ?, LockedBy = ? WHERE MetaObjectID = ?", bookingProductID, "allocated", "[]", nil, layout.MetaObjectsID)
 			if err != nil {
 				return fmt.Errorf("failed to update allocation status: %w", err)

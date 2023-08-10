@@ -5,6 +5,7 @@ package openapi
 
 import (
 	"fmt"
+	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/model"
 	"net/http"
 
 	"github.com/deepmap/oapi-codegen/pkg/runtime"
@@ -18,7 +19,7 @@ type ServerInterface interface {
 	FindPets(ctx echo.Context, params FindPetsParams) error
 	// Creates a new pet
 	// (POST /pets)
-	AllocateAll(ctx echo.Context,reservationIDs []int32, userID *int32) error
+	AllocateAll(ctx echo.Context,reservationIDs []int32, userID *int32) ([]model.AllocateResult,error)
 	// Creates a new pet
 	// (POST /pets)
 	AutoAllocate(ctx echo.Context, reservationID int, isNotify bool) error
@@ -71,12 +72,16 @@ func (w *ServerInterfaceWrapper) AllocateAll(ctx echo.Context) error {
 
 	// Bind the request body to the struct
 	if err = ctx.Bind(&requestBody); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid request body: %s", err))
+		return  echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid request body: %s", err))
 	}
 
-	// Invoke the callback with the unmarshalled arguments
-	err = w.Handler.AllocateAll(ctx, requestBody.ReservationIDs, &requestBody.UserID)
-	return err
+	resultsJson,err := w.Handler.AllocateAll(ctx, requestBody.ReservationIDs, &requestBody.UserID)
+	if err != nil {
+		return err
+	}
+
+	// Write the response
+	return ctx.JSON(http.StatusOK, resultsJson)
 }
 
 // AddPet converts echo context to params.
