@@ -521,7 +521,7 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 
 					}
 					fmt.Println("Return")
-					return results, nil
+					//return results, nil
 
 				}
 			}
