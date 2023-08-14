@@ -14,6 +14,7 @@ import (
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/repo"
 	"gitlab.hotel.tools/backend-team/allocation-go/internal/domain/service"
 	"go.uber.org/zap"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -510,10 +511,10 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 					for _, obj := range alreadyAllocated {
 						allocateResult := model.AllocateResult{
 							Status:        "allocated",
-							BookingID:     reservation.ID,
-							GroupID:       group.ID,
-							ItemID:        item.ID,
-							AllocatedRoom: obj,
+							BookingID:     strconv.Itoa(reservation.ID),
+							GroupID:       strconv.Itoa(int(group.ID)),
+							ItemID:        strconv.Itoa(item.ID),
+							AllocatedRoom: model.AllocatedRoom{Id: obj.MetaObjectsID, Name: "room"},
 						}
 						fmt.Println("Results")
 						results = append(results, allocateResult)
