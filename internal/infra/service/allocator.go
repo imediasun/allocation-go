@@ -507,6 +507,17 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 
 				if err != nil && alreadyAllocated != nil {
 					logger.Error("failed to marshal user to JSON", zap.Error(err))
+				} else if alreadyAllocated == nil {
+					allocateResult := model.AllocateResult{
+						Status:        "unallocated",
+						BookingID:     strconv.Itoa(reservation.ID),
+						GroupID:       strconv.Itoa(int(group.ID)),
+						ItemID:        strconv.Itoa(item.ID),
+						AllocatedRoom: nil,
+						Reason:        "No available rooms for this date period!",
+					}
+					fmt.Println("NoResults")
+					results = append(results, allocateResult)
 				} else {
 					for _, obj := range alreadyAllocated {
 						allocateResult := model.AllocateResult{
@@ -514,7 +525,7 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 							BookingID:     strconv.Itoa(reservation.ID),
 							GroupID:       strconv.Itoa(int(group.ID)),
 							ItemID:        strconv.Itoa(item.ID),
-							AllocatedRoom: model.AllocatedRoom{Id: obj.MetaObjectsID, Name: "room"},
+							AllocatedRoom: &model.AllocatedRoom{Id: obj.MetaObjectsID, Name: "room"},
 						}
 						fmt.Println("Results")
 						results = append(results, allocateResult)
