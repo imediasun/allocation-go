@@ -223,6 +223,7 @@ func (s *allocatorService) getProduct(productID string) (model.Product, error) {
 }
 
 func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int32) ([]model.Reservation, error) {
+	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	var reservationList []model.Reservation
 	//fmt.Printf("Value is: %d and type is BookingID: %T\\n", bookingIDs)
 	ids := bookingIDs
@@ -240,10 +241,7 @@ func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int
 	// Execute the query with the interfaceIDs as separate parameters
 	rows, err := s.db.Query(query, interfaceIDs...)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return []model.Reservation{}, ErrUserNotFound
-		}
-		return []model.Reservation{}, err
+		return []model.Reservation{}, fmt.Errorf("failed to get reservations: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -261,12 +259,15 @@ func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int
 			&reservation.MetaGroupID,
 		)
 		if err != nil {
+			logger.Error("failed on getting Reservations to struct", zap.Error(err))
 			return nil, err
 		}
 
+		fmt.Println("getAgent")
 		// get Agent
 		agent, err := s.getAgent(1) // Replace with correct Agent ID
 		if err != nil {
+			logger.Error("failed on getting Agent", zap.Error(err))
 			return nil, err
 		}
 		reservation.Creator = *agent
@@ -274,6 +275,7 @@ func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int
 		// get CurrencyRates
 		rates, err := s.getCurrencyRates(reservation.ID)
 		if err != nil {
+			logger.Error("failed on getting CurrencyRate", zap.Error(err))
 			return nil, err
 		}
 		reservation.CurrencyRates = rates
@@ -281,6 +283,7 @@ func (s *allocatorService) getReservations(ctx context.Context, bookingIDs []int
 		// get Groups
 		groups, err := s.getGroups(ctx, reservation.ID)
 		if err != nil {
+			logger.Error("failed on getting Groups", zap.Error(err))
 			return nil, err
 		}
 		reservation.Groups = groups
