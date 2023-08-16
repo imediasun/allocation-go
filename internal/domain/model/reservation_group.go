@@ -9,7 +9,7 @@ type ReservationGroup struct {
 	Item           BookingItems
 	ID             int32
 	BookingID      int32
-	PaxNationality string
+	PaxNationality null.String
 	StartDate      time.Time
 	EndDate        time.Time
 	ParentID       null.Int64
