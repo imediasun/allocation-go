@@ -481,7 +481,7 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 
 	// Print the JSON to the console
 	fmt.Println(string(userJSON))
-
+	fmt.Printf("Value is: %d before getReservations: %T\\n", reservationIDs)
 	reservations, err := s.getReservations(ctx, reservationIDs)
 
 	reservationsJSON, err := json.Marshal(reservations)
