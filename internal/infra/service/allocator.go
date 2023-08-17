@@ -496,6 +496,8 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 	fmt.Println(string(reservationsJSON))
 	allocatedStatus := "allocated"
 	alreadyProcessed := make(map[int]bool)
+	alreadyProcessed2 := make(map[int]bool)
+	var productObjectsToAllocate []MustBeAllocated
 	for _, reservation := range reservations {
 		//needToAmend := false
 		//bookingBeforeAmend := reservation
@@ -512,12 +514,35 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 						logger.Error("failed on getting AllocatedObject", zap.Error(err))
 					}
 					if !isAllocatedObject {
-						alreadyAllocated := s.allocation(ctx, item, allocatedStatus, startDate, endDate)
+						mustBeAllocated := s.multipleAllocation(ctx, item, allocatedStatus, startDate, endDate)
 
-						if err != nil && alreadyAllocated != nil {
+						productObjectsToAllocate = append(productObjectsToAllocate, mustBeAllocated)
 
+					}
+					alreadyProcessed[reservation.ID] = true
+				}
+			}
+		}
+
+	}
+
+	err = s.updateAllocationStatusBulk(ctx, productObjectsToAllocate, "allocated")
+	if err != nil {
+		return nil, fmt.Errorf("failed to update allocation status: %w", err)
+	}
+	fmt.Println("Json8=>")
+
+	for _, reservation := range reservations {
+		for _, group := range reservation.Groups {
+			for _, item := range group.Items {
+				if !alreadyProcessed2[reservation.ID] {
+
+					for _, objI := range productObjectsToAllocate {
+						if err != nil && objI.MetaObjects != nil {
+							fmt.Println("Test9=>")
 							logger.Error("failed to marshal user to JSON", zap.Error(err))
-						} else if alreadyAllocated == nil {
+						} else if objI.MetaObjects == nil {
+							fmt.Println("Test10=>")
 							allocateResult := model.AllocateResult{
 								Status:        "unallocated",
 								BookingID:     strconv.Itoa(reservation.ID),
@@ -529,7 +554,8 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 							fmt.Println("NoResults")
 							results = append(results, allocateResult)
 						} else {
-							for _, obj := range alreadyAllocated {
+							fmt.Println("Test11=>")
+							for _, obj := range objI.MetaObjects {
 								allocateResult := model.AllocateResult{
 									Status:        "allocated",
 									BookingID:     strconv.Itoa(reservation.ID),
@@ -541,36 +567,15 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 								results = append(results, allocateResult)
 
 							}
-							fmt.Println("Return")
-							//return results, nil
+						}
+						fmt.Println("Return")
 
-						}
-					} else {
-						allocateResult := model.AllocateResult{
-							Status:        "unallocated",
-							BookingID:     strconv.Itoa(reservation.ID),
-							GroupID:       strconv.Itoa(int(group.ID)),
-							ItemID:        strconv.Itoa(item.ID),
-							AllocatedRoom: nil,
-							Reason:        "Object is not allocatable!",
-						}
-						fmt.Println("NoResults")
-						results = append(results, allocateResult)
 					}
-					alreadyProcessed[reservation.ID] = true
+					alreadyProcessed2[reservation.ID] = true
 				}
 			}
 		}
-
-		/*		if needToAmend {
-				if err := tx.Commit(); err != nil {
-					logger.Error("failed to commit transaction", zap.Error(err))
-					return nil, err
-				}
-			}*/
 	}
-
-	fmt.Println("Json8=>")
 
 	return results, nil
 }
@@ -768,7 +773,8 @@ func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, 
 		logger.Error("Error getting venueAutoAllocate:", zap.Error(err))
 		//return nil, err
 	}
-
+	fmt.Println("venueAutoAllocate")
+	fmt.Println(venueAutoAllocate)
 	if venueAutoAllocate {
 		s.autoAllocateReservation(ctx, reservationID, isNotify)
 	}
@@ -912,7 +918,51 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 	return allocatableProductObjects, nil
 }
 
-func (s *allocatorService) allocation(ctx context.Context, item model.BookingItems, allocatedStatus string, startDate time.Time, endDate time.Time) []model.MetaObjects {
+func (s *allocatorService) allocateSingle(ctx context.Context, item model.BookingItems, allocatedStatus string, startDate time.Time, endDate time.Time) []model.MetaObjects {
+	logger := s.logger.WithMethod(ctx, "AllocateAll")
+	var product model.Product
+
+	if item.Type == "product" && item.Product.ProductType == "room" {
+		fmt.Println("Point")
+
+		product = item.Product
+
+		// Create the productObjectCriteria
+		productObjectCriteria := ProductObjectCriteria{
+			PeriodStart: startDate,
+			PeriodEnd:   endDate,
+			ProductIDs:  []string{product.ID}, // Assuming product.ID is int
+		}
+
+		allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{product.ID}, productObjectCriteria, item.ID)
+		if err != nil {
+			logger.Error("failed to marshal user to JSON", zap.Error(err))
+		}
+		if len(allocatableProductObjects) > 0 {
+			fmt.Println("InCheck")
+			err := s.updateAllocationStatus(ctx, item.ID, allocatedStatus, allocatableProductObjects)
+			if err != nil {
+				logger.Error("failed to marshal user to JSON", zap.Error(err))
+			}
+
+			return allocatableProductObjects
+
+		}
+
+	} else {
+		fmt.Println("Not Point")
+	}
+
+	return nil
+
+}
+
+type MustBeAllocated struct {
+	MetaObjects []model.MetaObjects
+	Item        int
+}
+
+func (s *allocatorService) multipleAllocation(ctx context.Context, item model.BookingItems, allocatedStatus string, startDate time.Time, endDate time.Time) MustBeAllocated {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	var product model.Product
 	//fmt.Printf("Value is: %d and type is item.Type: %T\\n", item.Type)
@@ -940,25 +990,26 @@ func (s *allocatorService) allocation(ctx context.Context, item model.BookingIte
 		}
 		if len(allocatableProductObjects) > 0 {
 			fmt.Println("InCheck")
-			err := s.updateAllocationStatus(ctx, item.ID, allocatedStatus, allocatableProductObjects)
-			if err != nil {
-				logger.Error("failed to marshal user to JSON", zap.Error(err))
+			/*			err := s.updateAllocationStatus(ctx, item.ID, allocatedStatus, allocatableProductObjects)
+						if err != nil {
+							logger.Error("failed to marshal user to JSON", zap.Error(err))
+						}*/
+			mustBeAllocated := MustBeAllocated{
+				allocatableProductObjects,
+				item.ID,
 			}
 
-			/*if len(allocatableProductObjects) > 1 {
-				return allocatableProductObjects[1:], nil
-			} else{*/
-			return allocatableProductObjects
-			/*	}*/
+			return mustBeAllocated
 
 		}
 
 	} else {
+
 		fmt.Println("Not Point")
+
 	}
 
-	return nil
-
+	return MustBeAllocated{}
 }
 
 func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservationID int, isNotify bool) ([]model.MetaObjects, error) {
@@ -989,7 +1040,7 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 		fmt.Println(string(groupItemsJSON))
 
 		for _, item := range group.Items {
-			tempAllocated := s.allocation(ctx, item, allocatedStatus, startDate, endDate)
+			tempAllocated := s.allocateSingle(ctx, item, allocatedStatus, startDate, endDate)
 			for _, obj := range tempAllocated {
 				allocatableProductObjects = append(allocatableProductObjects, obj)
 			}
@@ -1002,6 +1053,44 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 
 }
 
+func (s *allocatorService) updateAllocationStatusBulk(ctx context.Context, mustBeAllocated []MustBeAllocated, status string) error {
+	if len(mustBeAllocated) == 0 {
+		return nil // Ничего не делаем, так как нет данных для обновления
+	}
+
+	// Подготавливаем SQL запрос и параметры для массового INSERT
+	var valueStrings []string
+	var valueArgs []interface{}
+
+	for _, layout := range mustBeAllocated {
+		for _, metaObjects := range layout.MetaObjects {
+
+			var bookingProductIdUpdated int
+			err := s.db.QueryRowContext(ctx, "SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ? AND BookingProductID = ?", metaObjects.MetaObjectsID, layout.Item).Scan(&bookingProductIdUpdated)
+
+			if err != nil {
+				valueStrings = append(valueStrings, "(?, ?, ?, ?, ?)")
+				valueArgs = append(valueArgs, layout.Item, metaObjects.MetaObjectsID, status, "[]", nil)
+			} else {
+				valueStrings = append(valueStrings, "(?, ?, ?, ?, ?)")
+				valueArgs = append(valueArgs, layout.Item, metaObjects.MetaObjectsID, "allocated", "[]", nil)
+			}
+
+		}
+	}
+
+	stmt := fmt.Sprintf("INSERT INTO booking_allocations (BookingProductID, MetaObjectID, Status, StatusTimes, LockedBy) VALUES %s ON DUPLICATE KEY UPDATE Status = VALUES(Status), StatusTimes = VALUES(StatusTimes), LockedBy = VALUES(LockedBy)", strings.Join(valueStrings, ","))
+
+	_, err := s.db.ExecContext(ctx, stmt, valueArgs...)
+	if err != nil {
+		return fmt.Errorf("failed to update allocation status: %w", err)
+	}
+
+	fmt.Println("Rows inserted or updated successfully! 2")
+
+	return nil
+}
+
 func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingProductID int, status string, productObjects []model.MetaObjects) error {
 	for _, layout := range productObjects {
 		var bookingProductIdUpdated int
@@ -1012,7 +1101,7 @@ func (s *allocatorService) updateAllocationStatus(ctx context.Context, bookingPr
 			if err != nil {
 				return fmt.Errorf("failed to update allocation status: %w", err)
 			}
-			fmt.Println("New row inserted successfully!")
+			fmt.Println("New row inserted successfully! 1")
 		} else {
 			_, err = s.db.Exec("UPDATE booking_allocations SET BookingProductID = ?, Status = ?, StatusTimes = ?, LockedBy = ? WHERE MetaObjectID = ?", bookingProductID, "allocated", "[]", nil, layout.MetaObjectsID)
 			if err != nil {
