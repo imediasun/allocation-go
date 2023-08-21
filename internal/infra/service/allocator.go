@@ -86,13 +86,15 @@ func convertNullStringToString(ns null.String) string {
 
 func (s *allocatorService) getItemsForGroup(ctx context.Context, groupID int32) ([]model.BookingItems, error) {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
-	rows, err := s.db.Query("SELECT ID,Type,VenueID,ProductID,Status FROM booking_items WHERE GroupID = ?", groupID)
+	fmt.Println("getItemsForGroup-groupID")
+	fmt.Println(groupID)
+	rows, err := s.db.Query("SELECT ID,Type,VenueID,ProductID,Status FROM booking_items WHERE GroupID = ? AND ProductType = 'room' ", groupID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	items := make([]model.BookingItems, 0)
+	var items []model.BookingItems
 	var count int
 	for rows.Next() {
 		count++
@@ -109,7 +111,8 @@ func (s *allocatorService) getItemsForGroup(ctx context.Context, groupID int32) 
 			return nil, err
 		}
 		item.Product = product
-
+		fmt.Println("Item ID in getItemsForGroup")
+		fmt.Println(item.ID)
 		items = append(items, item)
 	}
 	fmt.Printf("Total rows getItems: %d\n", count)
@@ -122,7 +125,7 @@ func (s *allocatorService) getItemsForGroup(ctx context.Context, groupID int32) 
 		logger.Error("failed to marshal user to JSON", zap.Error(err))
 		return nil, err
 	}
-
+	fmt.Println("Items JSON in getItemsForGroup")
 	fmt.Println(string(itemsJSON))
 
 	return items, nil
@@ -188,8 +191,17 @@ func (s *allocatorService) getGroups(ctx context.Context, bookingID int) ([]mode
 		if err != nil {
 			return nil, err
 		}
-		group.Items = items
-
+		itemsJSON, err := json.Marshal(items)
+		if err != nil {
+			logger.Error("failed to marshal user to JSON", zap.Error(err))
+		}
+		fmt.Println("ItemsJSON")
+		fmt.Println(string(itemsJSON))
+		for m, item := range items {
+			fmt.Println("m in range Items")
+			fmt.Println(m)
+			group.Items = append(group.Items, item)
+		}
 		groups = append(groups, group)
 	}
 
@@ -461,8 +473,22 @@ func (s *allocatorService) getAllocatedObjectStatus(bookingProductID int) (strin
 	return status, nil
 }
 
+func containsInt(slice []int, target int) bool {
+	for _, value := range slice {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+type myContextKey int
+
+const roomsQuantaty myContextKey = 0
+
 func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int32, userID *int32) ([]model.AllocateResult, error) {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
+
 	//needToAmend := false
 	var results []model.AllocateResult
 
@@ -496,53 +522,68 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 	fmt.Println(string(reservationsJSON))
 	allocatedStatus := "allocated"
 	alreadyProcessed := make(map[int]bool)
-	alreadyProcessed2 := make(map[int]bool)
-	var productObjectsToAllocate []MustBeAllocated
+	var productObjectsToAllocate []*MustBeAllocated
+	roomsCounter := 0
+	stepCounter := 0
 	for _, reservation := range reservations {
-		//needToAmend := false
-		//bookingBeforeAmend := reservation
+		queryL := "SELECT COUNT(bi.ID) FROM booking_groups AS bg INNER JOIN booking_items as bi WHERE bg.BookingID = ? AND bi.GroupID = bg.ID AND bi.ProductType = 'room'"
+		// Execute the query and retrieve the count
+		var count int
 
-		for _, group := range reservation.Groups {
-			startDate := group.StartDate
-			endDate := group.EndDate
-			//fmt.Printf("Value is: %d and type is group.ID: %T\\n", group.ID)
-			for _, item := range group.Items {
-				if !alreadyProcessed[reservation.ID] {
+		err := s.db.QueryRow(queryL, reservation.ID).Scan(&count)
+		if err != nil {
+			fmt.Println("Error:", err)
+		}
+		roomsCounter = roomsCounter + count
+	}
+	fmt.Println("RoomsToBeAllocatedQuantaty")
+	fmt.Println(roomsCounter)
+	fmt.Println("reservations")
+	for b, reservation := range reservations {
 
+		fmt.Println("b in range reservations")
+		fmt.Println(b)
+
+		if !alreadyProcessed[reservation.ID] {
+
+			for c, group := range reservation.Groups {
+				fmt.Println("c in range reservation.Groups")
+				fmt.Println(c)
+				startDate := group.StartDate
+				endDate := group.EndDate
+				//fmt.Printf("Value is: %d and type is group.ID: %T\\n", group.ID)
+				for a, item := range group.Items {
+					fmt.Println("a in range group.Items")
+					fmt.Println(a)
+					fmt.Println(item.ID)
+					//Если айтем
 					isAllocatedObject, err := s.getAllocatedObject(item.ID)
 					if err != nil {
 						logger.Error("failed on getting AllocatedObject", zap.Error(err))
 					}
 					if !isAllocatedObject {
-						mustBeAllocated := s.multipleAllocation(ctx, item, allocatedStatus, startDate, endDate)
+						fmt.Println("RoomsToBeAllocatedQuantatyOnStep2")
+						fmt.Println(roomsCounter)
+						fmt.Println("OFFSET")
+						fmt.Println(stepCounter)
+						ctx = context.WithValue(context.Background(), roomsQuantaty, stepCounter)
+						mustBeAllocated, err := s.multipleAllocation(ctx, item, allocatedStatus, startDate, endDate)
+						fmt.Println("MustBeAllocated:=>")
+						if mustBeAllocated != nil {
+							stepCounter = stepCounter + 1
+						}
 
-						productObjectsToAllocate = append(productObjectsToAllocate, mustBeAllocated)
-
-					}
-					alreadyProcessed[reservation.ID] = true
-				}
-			}
-		}
-
-	}
-
-	err = s.updateAllocationStatusBulk(ctx, productObjectsToAllocate, "allocated")
-	if err != nil {
-		return nil, fmt.Errorf("failed to update allocation status: %w", err)
-	}
-	fmt.Println("Json8=>")
-
-	for _, reservation := range reservations {
-		for _, group := range reservation.Groups {
-			for _, item := range group.Items {
-				if !alreadyProcessed2[reservation.ID] {
-
-					for _, objI := range productObjectsToAllocate {
-						if err != nil && objI.MetaObjects != nil {
-							fmt.Println("Test9=>")
+						mustBeAllocatedJSON, err := json.Marshal(mustBeAllocated)
+						if err != nil {
 							logger.Error("failed to marshal user to JSON", zap.Error(err))
-						} else if objI.MetaObjects == nil {
-							fmt.Println("Test10=>")
+							return nil, err
+						}
+						fmt.Println(string(mustBeAllocatedJSON))
+
+						logger.Error("failed on getting AllocatedObject", zap.Error(err))
+
+						if mustBeAllocated == nil {
+							productObjectsToAllocate = append(productObjectsToAllocate, nil)
 							allocateResult := model.AllocateResult{
 								Status:        "unallocated",
 								BookingID:     strconv.Itoa(reservation.ID),
@@ -554,28 +595,41 @@ func (s *allocatorService) AllocateAll(ctx context.Context, reservationIDs []int
 							fmt.Println("NoResults")
 							results = append(results, allocateResult)
 						} else {
-							fmt.Println("Test11=>")
-							for _, obj := range objI.MetaObjects {
-								allocateResult := model.AllocateResult{
-									Status:        "allocated",
-									BookingID:     strconv.Itoa(reservation.ID),
-									GroupID:       strconv.Itoa(int(group.ID)),
-									ItemID:        strconv.Itoa(item.ID),
-									AllocatedRoom: &model.AllocatedRoom{Id: obj.MetaObjectsID, Name: "room"},
-								}
-								fmt.Println("Results")
-								results = append(results, allocateResult)
-
+							allocateResult := model.AllocateResult{
+								Status:        "allocated",
+								BookingID:     strconv.Itoa(reservation.ID),
+								GroupID:       strconv.Itoa(int(group.ID)),
+								ItemID:        strconv.Itoa(item.ID),
+								AllocatedRoom: &model.AllocatedRoom{Id: mustBeAllocated.MetaObjects[0].MetaObjectsID, Name: "room"},
 							}
+							fmt.Println("Results append")
+							results = append(results, allocateResult)
+
+							productObjectsToAllocate = append(productObjectsToAllocate, mustBeAllocated)
+
 						}
-						fmt.Println("Return")
 
 					}
-					alreadyProcessed2[reservation.ID] = true
+
 				}
 			}
 		}
+
+		//Here only add final array
+		alreadyProcessed[reservation.ID] = true
 	}
+	productObjectsToAllocateJSON, err := json.Marshal(productObjectsToAllocate)
+	if err != nil {
+		logger.Error("failed to marshal user to JSON", zap.Error(err))
+		return nil, err
+	}
+	fmt.Println("productObjectsToAllocate=>")
+	fmt.Println(string(productObjectsToAllocateJSON))
+	err = s.updateAllocationStatusBulk(ctx, productObjectsToAllocate, "allocated")
+	if err != nil {
+		return nil, fmt.Errorf("failed to update allocation status: %w", err)
+	}
+	fmt.Println("Json8=>")
 
 	return results, nil
 }
@@ -781,13 +835,15 @@ func (s *allocatorService) AutoAllocate(ctx context.Context, reservationID int, 
 
 }
 
-func buildQuery(productObjectCriteria ProductObjectCriteria, metaObjectsList []string) (string, []interface{}) {
+func (s *allocatorService) buildQuery(ctx context.Context, productObjectCriteria ProductObjectCriteria, metaObjectsList []string) (string, []interface{}) {
+
 	var query strings.Builder
 	var params []interface{}
 
 	mysqlDateFormatPeriodStart := productObjectCriteria.PeriodStart.Format("2006-01-02")
 	mysqlDateFormatPeriodEnd := productObjectCriteria.PeriodEnd.Format("2006-01-02")
-	query.WriteString("SELECT DISTINCT MAX(po.ID) ")
+
+	query.WriteString("SELECT DISTINCT po.ID ")
 	query.WriteString("FROM product_objects AS po ")
 	query.WriteString("WHERE po.ID IN (")
 	for i := range metaObjectsList {
@@ -820,17 +876,17 @@ func buildQuery(productObjectCriteria ProductObjectCriteria, metaObjectsList []s
 	query.WriteString("AND bi.ProductType = 'room' ")
 
 	query.WriteString("AND DATE(bg.EndDate) - INTERVAL 1 DAY >= DATE(%s) ")
-	query.WriteString("AND DATE(bg.StartDate) <= DATE(%s) - INTERVAL 1 DAY);")
-
+	query.WriteString("AND DATE(bg.StartDate) <= DATE(%s) - INTERVAL 1 DAY) LIMIT 1 OFFSET %d;")
 	//params = append(params, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
-	resultQuery := fmt.Sprintf(query.String(), mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd)
+	resultQuery := fmt.Sprintf(query.String(), mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, mysqlDateFormatPeriodStart, mysqlDateFormatPeriodEnd, ctx.Value(roomsQuantaty))
+
 	return resultQuery, params
 }
 
 func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, bookingProductIDs []string, criteria ProductObjectCriteria, bookingProductID int) ([]model.MetaObjects, error) {
 
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
-	//fmt.Printf("Value is: %d and type is hashCriteria: %T\\n", hashCriteria)
+	fmt.Printf("Value is: %d bookingProductIDs: %T\\n", bookingProductIDs)
 	mysqlDateFormatPeriodStart := criteria.PeriodStart.Format("2006-01-02")
 	mysqlDateFormatPeriodEnd := criteria.PeriodEnd.Format("2006-01-02")
 	productIds := bookingProductIDs
@@ -886,7 +942,7 @@ func (s *allocatorService) fetchAllocatableProductObjects(ctx context.Context, b
 	for i := range availableMetaObjectsPlaceholders {
 		availableMetaObjectsPlaceholders[i] = "?"
 	}
-	availableMetaObjectsQuery, params := buildQuery(criteria, metaObjectsList)
+	availableMetaObjectsQuery, params := s.buildQuery(ctx, criteria, metaObjectsList)
 
 	// Execute the query with the interfaceIDs as separate parameters
 	availableMetaObjectsRows, err := s.db.Query(availableMetaObjectsQuery, params...)
@@ -939,14 +995,13 @@ func (s *allocatorService) allocateSingle(ctx context.Context, item model.Bookin
 			logger.Error("failed to marshal user to JSON", zap.Error(err))
 		}
 		if len(allocatableProductObjects) > 0 {
-			fmt.Println("InCheck")
+			fmt.Println("InCheck-")
 			err := s.updateAllocationStatus(ctx, item.ID, allocatedStatus, allocatableProductObjects)
 			if err != nil {
 				logger.Error("failed to marshal user to JSON", zap.Error(err))
 			}
 
 			return allocatableProductObjects
-
 		}
 
 	} else {
@@ -962,7 +1017,7 @@ type MustBeAllocated struct {
 	Item        int
 }
 
-func (s *allocatorService) multipleAllocation(ctx context.Context, item model.BookingItems, allocatedStatus string, startDate time.Time, endDate time.Time) MustBeAllocated {
+func (s *allocatorService) multipleAllocation(ctx context.Context, item model.BookingItems, allocatedStatus string, startDate time.Time, endDate time.Time) (*MustBeAllocated, error) {
 	logger := s.logger.WithMethod(ctx, "AllocateAll")
 	var product model.Product
 	//fmt.Printf("Value is: %d and type is item.Type: %T\\n", item.Type)
@@ -985,8 +1040,12 @@ func (s *allocatorService) multipleAllocation(ctx context.Context, item model.Bo
 
 		// Fetch allocatable product objects using criteria
 		allocatableProductObjects, err := s.fetchAllocatableProductObjects(ctx, []string{product.ID}, productObjectCriteria, item.ID)
+
 		if err != nil {
 			logger.Error("failed to marshal user to JSON", zap.Error(err))
+			return nil, err
+		} else if allocatableProductObjects == nil {
+			return nil, err
 		}
 		if len(allocatableProductObjects) > 0 {
 			fmt.Println("InCheck")
@@ -999,7 +1058,7 @@ func (s *allocatorService) multipleAllocation(ctx context.Context, item model.Bo
 				item.ID,
 			}
 
-			return mustBeAllocated
+			return &mustBeAllocated, err
 
 		}
 
@@ -1009,7 +1068,7 @@ func (s *allocatorService) multipleAllocation(ctx context.Context, item model.Bo
 
 	}
 
-	return MustBeAllocated{}
+	return nil, nil
 }
 
 func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservationID int, isNotify bool) ([]model.MetaObjects, error) {
@@ -1026,64 +1085,94 @@ func (s *allocatorService) autoAllocateReservation(ctx context.Context, reservat
 	if err != nil {
 		logger.Error("failed to marshal user to JSON", zap.Error(err))
 	}
-	//fmt.Println("reservationToEditJSON")
+	fmt.Println("reservationToEditJSON")
 	var allocatableProductObjects []model.MetaObjects
 	fmt.Println(string(reservationToEditJSON))
+	queryL := "SELECT COUNT(bi.ID) FROM booking_groups AS bg INNER JOIN booking_items as bi WHERE bg.BookingID = ? AND bi.GroupID = bg.ID AND bi.ProductType = 'room'"
+
+	// Execute the query and retrieve the count
+	var count int
+	roomsCounter := 0
+
+	err = s.db.QueryRow(queryL, reservationToEdit.ID).Scan(&count)
+	if err != nil {
+		fmt.Println("Error:", err)
+	}
 	for _, group := range reservationToEdit.Groups {
+
 		startDate := group.StartDate
 		endDate := group.EndDate
 		groupItemsJSON, err := json.Marshal(group.Items)
 		if err != nil {
 			logger.Error("failed to marshal user to JSON", zap.Error(err))
 		}
-		//fmt.Println("groupItemsJSON")
+		fmt.Println("groupItemsJSON")
 		fmt.Println(string(groupItemsJSON))
 
 		for _, item := range group.Items {
+			ctx = context.WithValue(context.Background(), roomsQuantaty, count-(roomsCounter+1))
 			tempAllocated := s.allocateSingle(ctx, item, allocatedStatus, startDate, endDate)
+			if tempAllocated != nil {
+				roomsCounter = roomsCounter + 1
+			}
 			for _, obj := range tempAllocated {
 				allocatableProductObjects = append(allocatableProductObjects, obj)
 			}
 		}
 
-		return allocatableProductObjects, nil
 	}
 
-	return nil, err
+	return allocatableProductObjects, nil
 
 }
 
-func (s *allocatorService) updateAllocationStatusBulk(ctx context.Context, mustBeAllocated []MustBeAllocated, status string) error {
+func (s *allocatorService) updateAllocationStatusBulk(ctx context.Context, mustBeAllocated []*MustBeAllocated, status string) error {
+
 	if len(mustBeAllocated) == 0 {
 		return nil // Ничего не делаем, так как нет данных для обновления
 	}
 
-	// Подготавливаем SQL запрос и параметры для массового INSERT
-	var valueStrings []string
-	var valueArgs []interface{}
+	var insertValueStrings []string
+	var updateValueStrings []string
+	var insertValueArgs []interface{}
+	var updateValueArgs []interface{}
 
 	for _, layout := range mustBeAllocated {
-		for _, metaObjects := range layout.MetaObjects {
+		if layout != nil {
+			for _, metaObjects := range layout.MetaObjects {
+				var bookingProductIdUpdated int
+				err := s.db.QueryRowContext(ctx, "SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ? AND BookingProductID = ?", metaObjects.MetaObjectsID, layout.Item).Scan(&bookingProductIdUpdated)
 
-			var bookingProductIdUpdated int
-			err := s.db.QueryRowContext(ctx, "SELECT BookingProductID FROM booking_allocations WHERE MetaObjectID = ? AND BookingProductID = ?", metaObjects.MetaObjectsID, layout.Item).Scan(&bookingProductIdUpdated)
-
-			if err != nil {
-				valueStrings = append(valueStrings, "(?, ?, ?, ?, ?)")
-				valueArgs = append(valueArgs, layout.Item, metaObjects.MetaObjectsID, status, "[]", nil)
-			} else {
-				valueStrings = append(valueStrings, "(?, ?, ?, ?, ?)")
-				valueArgs = append(valueArgs, layout.Item, metaObjects.MetaObjectsID, "allocated", "[]", nil)
+				if err != nil {
+					insertValueStrings = append(insertValueStrings, "(?, ?, ?, ?, ?)")
+					insertValueArgs = append(insertValueArgs, layout.Item, metaObjects.MetaObjectsID, status, "[]", nil)
+				} else {
+					updateValueStrings = append(updateValueStrings, "(?, ?, ?, ?, ?)")
+					updateValueArgs = append(updateValueArgs, layout.Item, metaObjects.MetaObjectsID, status, "[]", nil)
+				}
 			}
+		}
 
+	}
+
+	if len(insertValueStrings) > 0 {
+		insertStmt := fmt.Sprintf("INSERT INTO booking_allocations (BookingProductID, MetaObjectID, Status, StatusTimes, LockedBy) VALUES %s", strings.Join(insertValueStrings, ","))
+		_, err := s.db.ExecContext(ctx, insertStmt, insertValueArgs...)
+		if err != nil {
+			return fmt.Errorf("failed to insert allocation status: %w", err)
 		}
 	}
 
-	stmt := fmt.Sprintf("INSERT INTO booking_allocations (BookingProductID, MetaObjectID, Status, StatusTimes, LockedBy) VALUES %s ON DUPLICATE KEY UPDATE Status = VALUES(Status), StatusTimes = VALUES(StatusTimes), LockedBy = VALUES(LockedBy)", strings.Join(valueStrings, ","))
+	if len(updateValueStrings) > 0 {
+		updateStmt := fmt.Sprintf("INSERT INTO booking_allocations (BookingProductID, MetaObjectID, Status, StatusTimes, LockedBy) VALUES %s ON DUPLICATE KEY UPDATE Status = ?, StatusTimes = ?, LockedBy = ?", strings.Join(updateValueStrings, ","))
+		for range updateValueStrings {
+			updateValueArgs = append(updateValueArgs, status, "[]", nil)
+		}
 
-	_, err := s.db.ExecContext(ctx, stmt, valueArgs...)
-	if err != nil {
-		return fmt.Errorf("failed to update allocation status: %w", err)
+		_, err := s.db.ExecContext(ctx, updateStmt, updateValueArgs...)
+		if err != nil {
+			return fmt.Errorf("failed to update allocation status: %w", err)
+		}
 	}
 
 	fmt.Println("Rows inserted or updated successfully! 2")
